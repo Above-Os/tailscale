@@ -14,7 +14,6 @@ import (
 	"go4.org/netipx"
 	"tailscale.com/net/netmon"
 	"tailscale.com/types/logger"
-	"tailscale.com/util/set"
 )
 
 // For now this router only supports the WireGuard userspace implementation.
@@ -27,7 +26,7 @@ type openbsdRouter struct {
 	tunname string
 	local4  netip.Prefix
 	local6  netip.Prefix
-	routes  set.Set[netip.Prefix]
+	routes  map[netip.Prefix]struct{}
 }
 
 func newUserspaceRouter(logf logger.Logf, tundev tun.Device, netMon *netmon.Monitor) (Router, error) {
@@ -174,9 +173,9 @@ func (r *openbsdRouter) Set(cfg *Config) error {
 		}
 	}
 
-	newRoutes := set.Set[netip.Prefix]{}
+	newRoutes := make(map[netip.Prefix]struct{})
 	for _, route := range cfg.Routes {
-		newRoutes.Add(route)
+		newRoutes[route] = struct{}{}
 	}
 	for route := range r.routes {
 		if _, keep := newRoutes[route]; !keep {

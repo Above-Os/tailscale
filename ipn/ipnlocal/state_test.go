@@ -19,6 +19,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsd"
 	"tailscale.com/tstest"
+	"tailscale.com/types/empty"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/logid"
@@ -161,19 +162,20 @@ func (cc *mockControl) send(err error, url string, loginFinished bool, nm *netma
 		cc.authBlocked = false
 		cc.mu.Unlock()
 	}
-	if cc.opts.Observer != nil {
+	if cc.opts.Status != nil {
+		pv := cc.persist.View()
 		s := controlclient.Status{
 			URL:     url,
 			NetMap:  nm,
-			Persist: cc.persist.View(),
+			Persist: &pv,
 			Err:     err,
 		}
 		if loginFinished {
-			s.SetStateForTest(controlclient.StateAuthenticated)
+			s.LoginFinished = &empty.Message{}
 		} else if url == "" && err == nil && nm == nil {
-			s.SetStateForTest(controlclient.StateNotAuthenticated)
+			s.LogoutFinished = &empty.Message{}
 		}
-		cc.opts.Observer.SetControlClientStatus(cc, s)
+		cc.opts.Status(s)
 	}
 }
 
@@ -215,6 +217,11 @@ func (cc *mockControl) Login(t *tailcfg.Oauth2Token, flags controlclient.LoginFl
 	cc.mu.Lock()
 	defer cc.mu.Unlock()
 	cc.authBlocked = interact || newKeys
+}
+
+func (cc *mockControl) StartLogout() {
+	cc.logf("StartLogout")
+	cc.called("StartLogout")
 }
 
 func (cc *mockControl) Logout(ctx context.Context) error {
@@ -324,10 +331,10 @@ func TestStateMachine(t *testing.T) {
 			(n.Prefs != nil && n.Prefs.Valid()) ||
 			n.BrowseToURL != nil ||
 			n.LoginFinished != nil {
-			logf("%v\n\n", n)
+			logf("\n%v\n\n", n)
 			notifies.put(n)
 		} else {
-			logf("(ignored) %v\n\n", n)
+			logf("\n(ignored) %v\n\n", n)
 		}
 	})
 
@@ -353,7 +360,7 @@ func TestStateMachine(t *testing.T) {
 		// Note: a totally fresh system has Prefs.LoggedOut=false by
 		// default. We are logged out, but not because the user asked
 		// for it, so it doesn't count as Prefs.LoggedOut==true.
-		c.Assert(prefs.LoggedOut(), qt.IsTrue)
+		c.Assert(prefs.LoggedOut(), qt.IsFalse)
 		c.Assert(prefs.WantRunning(), qt.IsFalse)
 		c.Assert(ipn.NeedsLogin, qt.Equals, *nn[1].State)
 		c.Assert(ipn.NeedsLogin, qt.Equals, b.State())
@@ -374,7 +381,7 @@ func TestStateMachine(t *testing.T) {
 		cc.assertCalls()
 		c.Assert(nn[0].Prefs, qt.IsNotNil)
 		c.Assert(nn[1].State, qt.IsNotNil)
-		c.Assert(nn[0].Prefs.LoggedOut(), qt.IsTrue)
+		c.Assert(nn[0].Prefs.LoggedOut(), qt.IsFalse)
 		c.Assert(nn[0].Prefs.WantRunning(), qt.IsFalse)
 		c.Assert(ipn.NeedsLogin, qt.Equals, *nn[1].State)
 		c.Assert(ipn.NeedsLogin, qt.Equals, b.State())
@@ -412,7 +419,7 @@ func TestStateMachine(t *testing.T) {
 		nn := notifies.drain(1)
 
 		c.Assert(nn[0].Prefs, qt.IsNotNil)
-		c.Assert(nn[0].Prefs.LoggedOut(), qt.IsTrue)
+		c.Assert(nn[0].Prefs.LoggedOut(), qt.IsFalse)
 		c.Assert(nn[0].Prefs.WantRunning(), qt.IsFalse)
 		c.Assert(ipn.NeedsLogin, qt.Equals, b.State())
 	}
@@ -501,7 +508,7 @@ func TestStateMachine(t *testing.T) {
 	// (ie. I suspect it would be better to change false->true in send()
 	// below, and do the same in the real controlclient.)
 	cc.send(nil, "", false, &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		nn := notifies.drain(1)
@@ -578,39 +585,59 @@ func TestStateMachine(t *testing.T) {
 
 	// User wants to logout.
 	store.awaitWrite()
-	t.Logf("\n\nLogout")
-	notifies.expect(5)
-	b.Logout(context.Background())
+	t.Logf("\n\nLogout (async)")
+	notifies.expect(2)
+	b.Logout()
 	{
-		nn := notifies.drain(5)
-		previousCC.assertCalls("pause", "Logout", "unpause", "Shutdown")
+		nn := notifies.drain(2)
+		cc.assertCalls("pause", "StartLogout")
 		c.Assert(nn[0].State, qt.IsNotNil)
-		c.Assert(*nn[0].State, qt.Equals, ipn.Stopped)
-
 		c.Assert(nn[1].Prefs, qt.IsNotNil)
+		c.Assert(ipn.Stopped, qt.Equals, *nn[0].State)
 		c.Assert(nn[1].Prefs.LoggedOut(), qt.IsTrue)
 		c.Assert(nn[1].Prefs.WantRunning(), qt.IsFalse)
-
-		cc.assertCalls("New")
-		c.Assert(nn[2].State, qt.IsNotNil)
-		c.Assert(*nn[2].State, qt.Equals, ipn.NoState)
-
-		c.Assert(nn[3].Prefs, qt.IsNotNil) // emptyPrefs
-		c.Assert(nn[3].Prefs.LoggedOut(), qt.IsTrue)
-		c.Assert(nn[3].Prefs.WantRunning(), qt.IsFalse)
-
-		c.Assert(nn[4].State, qt.IsNotNil)
-		c.Assert(*nn[4].State, qt.Equals, ipn.NeedsLogin)
-
-		c.Assert(b.State(), qt.Equals, ipn.NeedsLogin)
-
+		c.Assert(ipn.Stopped, qt.Equals, b.State())
 		c.Assert(store.sawWrite(), qt.IsTrue)
 	}
 
-	// A second logout should be a no-op as we are in the NeedsLogin state.
-	t.Logf("\n\nLogout2")
+	// Let's make the logout succeed.
+	t.Logf("\n\nLogout (async) - succeed")
+	notifies.expect(3)
+	cc.send(nil, "", false, nil)
+	{
+		previousCC.assertShutdown(true)
+		nn := notifies.drain(3)
+		cc.assertCalls("New")
+		c.Assert(nn[0].State, qt.IsNotNil)
+		c.Assert(*nn[0].State, qt.Equals, ipn.NoState)
+		c.Assert(nn[1].Prefs, qt.IsNotNil) // emptyPrefs
+		c.Assert(nn[2].State, qt.IsNotNil)
+		c.Assert(*nn[2].State, qt.Equals, ipn.NeedsLogin)
+		c.Assert(b.Prefs().LoggedOut(), qt.IsFalse)
+		c.Assert(b.Prefs().WantRunning(), qt.IsFalse)
+		c.Assert(b.State(), qt.Equals, ipn.NeedsLogin)
+	}
+
+	// A second logout should reset all prefs.
+	t.Logf("\n\nLogout2 (async)")
+	notifies.expect(1)
+	b.Logout()
+	{
+		nn := notifies.drain(1)
+		c.Assert(nn[0].Prefs, qt.IsNotNil) // emptyPrefs
+		// BUG: the backend has already called StartLogout, and we're
+		// still logged out. So it shouldn't call it again.
+		cc.assertCalls("StartLogout")
+		cc.assertCalls()
+		c.Assert(b.Prefs().LoggedOut(), qt.IsTrue)
+		c.Assert(b.Prefs().WantRunning(), qt.IsFalse)
+		c.Assert(ipn.NeedsLogin, qt.Equals, b.State())
+	}
+
+	// Let's acknowledge the second logout too.
+	t.Logf("\n\nLogout2 (async) - succeed")
 	notifies.expect(0)
-	b.Logout(context.Background())
+	cc.send(nil, "", false, nil)
 	{
 		notifies.drain(0)
 		cc.assertCalls()
@@ -619,11 +646,24 @@ func TestStateMachine(t *testing.T) {
 		c.Assert(ipn.NeedsLogin, qt.Equals, b.State())
 	}
 
-	// A third logout should also be a no-op as the cc should be in
-	// AuthCantContinue state.
-	t.Logf("\n\nLogout3")
-	notifies.expect(3)
-	b.Logout(context.Background())
+	// Try the synchronous logout feature.
+	t.Logf("\n\nLogout3 (sync)")
+	notifies.expect(0)
+	b.LogoutSync(context.Background())
+	// NOTE: This returns as soon as cc.Logout() returns, which is okay
+	// I guess, since that's supposed to be synchronous.
+	{
+		notifies.drain(0)
+		cc.assertCalls("Logout")
+		c.Assert(b.Prefs().LoggedOut(), qt.IsTrue)
+		c.Assert(b.Prefs().WantRunning(), qt.IsFalse)
+		c.Assert(ipn.NeedsLogin, qt.Equals, b.State())
+	}
+
+	// Generate the third logout event.
+	t.Logf("\n\nLogout3 (sync) - succeed")
+	notifies.expect(0)
+	cc.send(nil, "", false, nil)
 	{
 		notifies.drain(0)
 		cc.assertCalls()
@@ -665,7 +705,7 @@ func TestStateMachine(t *testing.T) {
 	cc.persist.UserProfile.LoginName = "user2"
 	cc.persist.NodeID = "node2"
 	cc.send(nil, "", true, &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		nn := notifies.drain(3)
@@ -732,7 +772,7 @@ func TestStateMachine(t *testing.T) {
 	t.Logf("\n\nStart4 -> netmap")
 	notifies.expect(0)
 	cc.send(nil, "", true, &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		notifies.drain(0)
@@ -801,7 +841,7 @@ func TestStateMachine(t *testing.T) {
 	cc.persist.UserProfile.LoginName = "user3"
 	cc.persist.NodeID = "node3"
 	cc.send(nil, "", true, &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		nn := notifies.drain(3)
@@ -845,7 +885,7 @@ func TestStateMachine(t *testing.T) {
 	t.Logf("\n\nLoginFinished5")
 	notifies.expect(2)
 	cc.send(nil, "", true, &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		nn := notifies.drain(2)
@@ -862,8 +902,8 @@ func TestStateMachine(t *testing.T) {
 	t.Logf("\n\nExpireKey")
 	notifies.expect(1)
 	cc.send(nil, "", false, &netmap.NetworkMap{
-		Expiry:   time.Now().Add(-time.Minute),
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		Expiry:        time.Now().Add(-time.Minute),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		nn := notifies.drain(1)
@@ -877,8 +917,8 @@ func TestStateMachine(t *testing.T) {
 	t.Logf("\n\nExtendKey")
 	notifies.expect(1)
 	cc.send(nil, "", false, &netmap.NetworkMap{
-		Expiry:   time.Now().Add(time.Minute),
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		Expiry:        time.Now().Add(time.Minute),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	{
 		nn := notifies.drain(1)
@@ -923,7 +963,7 @@ func TestEditPrefsHasNoKeys(t *testing.T) {
 
 			LegacyFrontendPrivateMachineKey: key.NewMachine(),
 		},
-	}).View(), "")
+	}).View())
 	if p := b.pm.CurrentPrefs().Persist(); !p.Valid() || p.PrivateNodeKey().IsZero() {
 		t.Fatalf("PrivateNodeKey not set")
 	}
@@ -1023,7 +1063,7 @@ func TestWGEngineStatusRace(t *testing.T) {
 
 	// Assert that we are logged in and authorized.
 	cc.send(nil, "", true, &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{MachineAuthorized: true}).View(),
+		MachineStatus: tailcfg.MachineAuthorized,
 	})
 	wantState(ipn.Starting)
 

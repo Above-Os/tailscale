@@ -60,12 +60,10 @@ func runUpdate(ctx context.Context, args []string) error {
 	if updateArgs.track != "" {
 		ver = updateArgs.track
 	}
-	err := clientupdate.Update(clientupdate.Arguments{
+	err := clientupdate.Update(clientupdate.UpdateArgs{
 		Version:  ver,
 		AppStore: updateArgs.appStore,
-		Logf:     printf,
-		Stdout:   Stdout,
-		Stderr:   Stderr,
+		Logf:     func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
 		Confirm:  confirmUpdate,
 	})
 	if errors.Is(err, errors.ErrUnsupported) {

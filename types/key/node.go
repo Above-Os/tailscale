@@ -103,14 +103,9 @@ func (k NodePrivate) Public() NodePublic {
 	return ret
 }
 
-// AppendText implements encoding.TextAppender.
-func (k NodePrivate) AppendText(b []byte) ([]byte, error) {
-	return appendHexKey(b, nodePrivateHexPrefix, k.k[:]), nil
-}
-
 // MarshalText implements encoding.TextMarshaler.
 func (k NodePrivate) MarshalText() ([]byte, error) {
-	return k.AppendText(nil)
+	return toHex(k.k[:], nodePrivateHexPrefix), nil
 }
 
 // MarshalText implements encoding.TextUnmarshaler.
@@ -166,12 +161,6 @@ func (p NodePublic) Shard() uint8 {
 	// combine raw values of the key to give us something sufficient.
 	s := uint8(p.k[31]) + uint8(p.k[30]) + uint8(p.k[20])
 	return s ^ uint8(p.k[2]+p.k[12])
-}
-
-// Compare returns -1, 0, or 1, depending on whether p orders before p2,
-// using bytes.Compare on the bytes of the public key.
-func (p NodePublic) Compare(p2 NodePublic) int {
-	return bytes.Compare(p.k[:], p2.k[:])
 }
 
 // ParseNodePublicUntyped parses an untyped 64-character hex value
@@ -310,7 +299,7 @@ func (k NodePublic) UntypedHexString() string {
 	return hex.EncodeToString(k.k[:])
 }
 
-// String returns k as a hex-encoded string with a type prefix.
+// String returns the output of MarshalText as a string.
 func (k NodePublic) String() string {
 	bs, err := k.MarshalText()
 	if err != nil {
@@ -319,20 +308,12 @@ func (k NodePublic) String() string {
 	return string(bs)
 }
 
-// AppendText implements encoding.TextAppender. It appends a typed prefix
-// followed by hex encoded represtation of k to b.
-func (k NodePublic) AppendText(b []byte) ([]byte, error) {
-	return appendHexKey(b, nodePublicHexPrefix, k.k[:]), nil
-}
-
-// MarshalText implements encoding.TextMarshaler. It returns a typed prefix
-// followed by a hex encoded representation of k.
+// MarshalText implements encoding.TextMarshaler.
 func (k NodePublic) MarshalText() ([]byte, error) {
-	return k.AppendText(nil)
+	return toHex(k.k[:], nodePublicHexPrefix), nil
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler. It expects a typed prefix
-// followed by a hex encoded representation of k.
+// MarshalText implements encoding.TextUnmarshaler.
 func (k *NodePublic) UnmarshalText(b []byte) error {
 	return parseHex(k.k[:], mem.B(b), mem.S(nodePublicHexPrefix))
 }

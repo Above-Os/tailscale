@@ -57,7 +57,6 @@ func New() *tailcfg.Hostinfo {
 		Cloud:           string(cloudenv.Get()),
 		NoLogsNoSupport: envknob.NoLogsNoSupport(),
 		AllowsUpdate:    envknob.AllowsRemoteUpdate(),
-		WoLMACs:         getWoLMACs(),
 	}
 }
 

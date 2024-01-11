@@ -4,7 +4,6 @@ package ssh
 
 import (
 	"bytes"
-	"io"
 	"net"
 	"strconv"
 	"strings"

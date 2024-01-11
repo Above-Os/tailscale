@@ -1,13 +1,10 @@
 // Copyright (c) Tailscale Inc & AUTHORS
 // SPDX-License-Identifier: BSD-3-Clause
 
+//go:generate go run update-dns-fallbacks.go
+
 // Package dnsfallback contains a DNS fallback mechanism
 // for starting up Tailscale when the system DNS is broken or otherwise unavailable.
-//
-// The data is backed by a JSON file `dns-fallback-servers.json` that is updated
-// by `update-dns-fallbacks.go`:
-//
-//	(cd net/dnsfallback; go run update-dns-fallbacks.go)
 package dnsfallback
 
 import (
@@ -22,10 +19,11 @@ import (
 	"net/url"
 	"os"
 	"reflect"
-	"slices"
 	"sync/atomic"
 	"time"
 
+	"go4.org/netipx"
+	"golang.org/x/exp/slices"
 	"tailscale.com/atomicfile"
 	"tailscale.com/envknob"
 	"tailscale.com/net/dns/recursive"
@@ -79,13 +77,11 @@ func MakeLookupFunc(logf logger.Logf, netMon *netmon.Monitor) func(ctx context.C
 				metricRecursiveErrors.Add(1)
 				return
 			}
-
-			compareAddr := func(a, b netip.Addr) int { return a.Compare(b) }
-			slices.SortFunc(addrs, compareAddr)
+			slices.SortFunc(addrs, netipx.CompareAddr)
 
 			// Wait for a response from the main function
 			oldAddrs := <-addrsCh
-			slices.SortFunc(oldAddrs, compareAddr)
+			slices.SortFunc(oldAddrs, netipx.CompareAddr)
 
 			matches := slices.Equal(addrs, oldAddrs)
 

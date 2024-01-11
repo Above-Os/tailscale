@@ -303,7 +303,7 @@ func (p *Pinger) Send(ctx context.Context, dest net.Addr, data []byte) (time.Dur
 
 	m := icmp.Message{
 		Type: icmpType,
-		Code: 0,
+		Code: icmpType.Protocol(),
 		Body: &icmp.Echo{
 			ID:   int(p.id),
 			Seq:  int(seq),

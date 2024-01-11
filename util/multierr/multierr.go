@@ -7,8 +7,9 @@ package multierr
 
 import (
 	"errors"
-	"slices"
 	"strings"
+
+	"golang.org/x/exp/slices"
 )
 
 // An Error represents multiple errors.

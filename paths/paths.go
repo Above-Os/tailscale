@@ -27,9 +27,6 @@ func DefaultTailscaledSocket() string {
 	if runtime.GOOS == "darwin" {
 		return "/var/run/tailscaled.socket"
 	}
-	if runtime.GOOS == "plan9" {
-		return "/srv/tailscaled.sock"
-	}
 	switch distro.Get() {
 	case distro.Synology:
 		if distro.DSMVersion() == 6 {
@@ -48,14 +45,7 @@ func DefaultTailscaledSocket() string {
 	return "tailscaled.sock"
 }
 
-// Overridden in init by OS-specific files.
-var (
-	stateFileFunc func() string
-
-	// ensureStateDirPerms applies a restrictive ACL/chmod
-	// to the provided directory.
-	ensureStateDirPerms = func(string) error { return nil }
-)
+var stateFileFunc func() string
 
 // DefaultTailscaledStateFile returns the default path to the
 // tailscaled state file, or the empty string if there's no reasonable
@@ -77,16 +67,6 @@ func MkStateDir(dirPath string) error {
 	if err := os.MkdirAll(dirPath, 0700); err != nil {
 		return err
 	}
-	return ensureStateDirPerms(dirPath)
-}
 
-// LegacyStateFilePath returns the legacy path to the state file when
-// it was stored under the current user's %LocalAppData%.
-//
-// It is only called on Windows.
-func LegacyStateFilePath() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("LocalAppData"), "Tailscale", "server-state.conf")
-	}
-	return ""
+	return ensureStateDirPerms(dirPath)
 }

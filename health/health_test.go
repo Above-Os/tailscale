@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-
-	"tailscale.com/util/set"
 )
 
 func TestAppendWarnableDebugFlags(t *testing.T) {
@@ -37,5 +35,5 @@ func TestAppendWarnableDebugFlags(t *testing.T) {
 func resetWarnables() {
 	mu.Lock()
 	defer mu.Unlock()
-	warnables = set.Set[*Warnable]{}
+	warnables = make(map[*Warnable]struct{})
 }

@@ -13,23 +13,14 @@ import (
 	"strings"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
-	"tailscale.com/envknob"
+	"golang.org/x/exp/slices"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 	"tailscale.com/util/mak"
 )
 
-var funnelCmd = func() *ffcli.Command {
-	se := &serveEnv{lc: &localClient}
-	// This flag is used to switch to an in-development
-	// implementation of the tailscale funnel command.
-	// See https://github.com/tailscale/tailscale/issues/7844
-	if envknob.UseWIPCode() {
-		return newServeDevCommand(se, funnel)
-	}
-	return newFunnelCommand(se)
-}
+var funnelCmd = newFunnelCommand(&serveEnv{lc: &localClient})
 
 // newFunnelCommand returns a new "funnel" subcommand using e as its environment.
 // The funnel subcommand is used to turn on/off the Funnel service.
@@ -92,7 +83,7 @@ func (e *serveEnv) runFunnel(ctx context.Context, args []string) error {
 	if sc == nil {
 		sc = new(ipn.ServeConfig)
 	}
-	st, err := e.getLocalClientStatusWithoutPeers(ctx)
+	st, err := e.getLocalClientStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("getting client status: %w", err)
 	}
@@ -146,14 +137,16 @@ func (e *serveEnv) runFunnel(ctx context.Context, args []string) error {
 //
 // verifyFunnelEnabled may refresh the local state and modify the st input.
 func (e *serveEnv) verifyFunnelEnabled(ctx context.Context, st *ipnstate.Status, port uint16) error {
-	hasFunnelAttrs := func(selfNode *ipnstate.PeerStatus) bool {
-		return selfNode.HasCap(tailcfg.CapabilityHTTPS) && selfNode.HasCap(tailcfg.NodeAttrFunnel)
+	hasFunnelAttrs := func(attrs []string) bool {
+		hasHTTPS := slices.Contains(attrs, tailcfg.CapabilityHTTPS)
+		hasFunnel := slices.Contains(attrs, tailcfg.NodeAttrFunnel)
+		return hasHTTPS && hasFunnel
 	}
-	if hasFunnelAttrs(st.Self) {
+	if hasFunnelAttrs(st.Self.Capabilities) {
 		return nil // already enabled
 	}
-	enableErr := e.enableFeatureInteractive(ctx, "funnel", tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel)
-	st, statusErr := e.getLocalClientStatusWithoutPeers(ctx) // get updated status; interactive flow may block
+	enableErr := e.enableFeatureInteractive(ctx, "funnel", hasFunnelAttrs)
+	st, statusErr := e.getLocalClientStatus(ctx) // get updated status; interactive flow may block
 	switch {
 	case statusErr != nil:
 		return fmt.Errorf("getting client status: %w", statusErr)
@@ -164,12 +157,12 @@ func (e *serveEnv) verifyFunnelEnabled(ctx context.Context, st *ipnstate.Status,
 		// the feature flag on.
 		// TODO(sonia,tailscale/corp#10577): Remove this fallback once the
 		// control flag is turned on for all domains.
-		if err := ipn.CheckFunnelAccess(port, st.Self); err != nil {
+		if err := ipn.CheckFunnelAccess(port, st.Self.Capabilities); err != nil {
 			return err
 		}
 	default:
 		// Done with enablement, make sure the requested port is allowed.
-		if err := ipn.CheckFunnelPort(port, st.Self); err != nil {
+		if err := ipn.CheckFunnelPort(port, st.Self.Capabilities); err != nil {
 			return err
 		}
 	}

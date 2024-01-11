@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -148,7 +149,7 @@ func getHostKeys(dir string) (ret []ssh.Signer, err error) {
 
 func hostKeyFileOrCreate(keyDir, typ string) ([]byte, error) {
 	path := filepath.Join(keyDir, "ssh_host_"+typ+"_key")
-	v, err := os.ReadFile(path)
+	v, err := ioutil.ReadFile(path)
 	if err == nil {
 		return v, nil
 	}

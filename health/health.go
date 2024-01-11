@@ -27,7 +27,7 @@ var (
 
 	sysErr    = map[Subsystem]error{}                   // error key => err (or nil for no error)
 	watchers  = set.HandleSet[func(Subsystem, error)]{} // opt func to run if error state changes
-	warnables = set.Set[*Warnable]{}
+	warnables = map[*Warnable]struct{}{}                // set of warnables
 	timer     *time.Timer
 
 	debugHandler = map[string]http.Handler{}
@@ -84,7 +84,7 @@ func NewWarnable(opts ...WarnableOpt) *Warnable {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	warnables.Add(w)
+	warnables[w] = struct{}{}
 	return w
 }
 
@@ -279,31 +279,27 @@ func SetControlHealth(problems []string) {
 
 // GotStreamedMapResponse notes that we got a tailcfg.MapResponse
 // message in streaming mode, even if it's just a keep-alive message.
-//
-// This also notes that a map poll is in progress. To unset that, call
-// SetOutOfPollNetMap().
 func GotStreamedMapResponse() {
 	mu.Lock()
 	defer mu.Unlock()
 	lastStreamedMapResponse = time.Now()
-	if !inMapPoll {
-		inMapPoll = true
-		inMapPollSince = time.Now()
-	}
 	selfCheckLocked()
 }
 
-// SetOutOfPollNetMap records that the client is no longer in
-// an HTTP map request long poll to the control plane.
-func SetOutOfPollNetMap() {
+// SetInPollNetMap records whether the client has an open
+// HTTP long poll open to the control plane.
+func SetInPollNetMap(v bool) {
 	mu.Lock()
 	defer mu.Unlock()
-	if !inMapPoll {
+	if v == inMapPoll {
 		return
 	}
-	inMapPoll = false
-	lastMapPollEndedAt = time.Now()
-	selfCheckLocked()
+	inMapPoll = v
+	if v {
+		inMapPollSince = time.Now()
+	} else {
+		lastMapPollEndedAt = time.Now()
+	}
 }
 
 // GetInPollNetMap reports whether the client has an open

@@ -136,8 +136,7 @@ func getChainsFromTable(c *nftables.Conn, table *nftables.Table) ([]*nftables.Ch
 	return ret, nil
 }
 
-// isTSChain reports whether `name` begins with "ts-" (and is thus a
-// Tailscale-managed chain).
+// isTSChain retruns true if the chain name starts with ts
 func isTSChain(name string) bool {
 	return strings.HasPrefix(name, "ts-")
 }
@@ -186,7 +185,7 @@ func NewNfTablesRunner(logf logger.Logf) (*nftablesRunner, error) {
 
 	v6err := checkIPv6(logf)
 	if v6err != nil {
-		logf("disabling tunneled IPv6 due to system IPv6 config: %v", v6err)
+		logf("disabling tunneled IPv6 due to system IPv6 config: %w", v6err)
 	}
 	supportsV6 := v6err == nil
 	supportsV6NAT := supportsV6 && checkSupportsV6NAT()
@@ -1109,9 +1108,7 @@ func (n *nftablesRunner) DelSNATRule() error {
 			return fmt.Errorf("find SNAT rule v4: %w", err)
 		}
 
-		if SNATRule != nil {
-			_ = conn.DelRule(SNATRule)
-		}
+		_ = conn.DelRule(SNATRule)
 	}
 
 	if err := conn.Flush(); err != nil {

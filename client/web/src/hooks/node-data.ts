@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from "react"
-import { apiFetch, setUnraidCsrfToken } from "src/api"
+export type UserProfile = {
+  LoginName: string
+  DisplayName: string
+  ProfilePicURL: string
+}
 
 export type NodeData = {
   Profile: UserProfile
@@ -15,103 +18,31 @@ export type NodeData = {
   IsUnraid: boolean
   UnraidToken: string
   IPNVersion: string
-
-  DebugMode: "" | "login" | "full" // empty when not running in any debug mode
 }
 
-export type UserProfile = {
-  LoginName: string
-  DisplayName: string
-  ProfilePicURL: string
-}
-
-export type NodeUpdate = {
-  AdvertiseRoutes?: string
-  AdvertiseExitNode?: boolean
-  Reauthenticate?: boolean
-  ForceLogout?: boolean
+// testData is static set of nodedata used during development.
+// This can be removed once we have a real node data API.
+const testData: NodeData = {
+  Profile: {
+    LoginName: "amelie",
+    DisplayName: "Amelie Pangolin",
+    ProfilePicURL: "https://login.tailscale.com/logo192.png",
+  },
+  Status: "Running",
+  DeviceName: "amelies-laptop",
+  IP: "100.1.2.3",
+  AdvertiseExitNode: false,
+  AdvertiseRoutes: "",
+  LicensesURL: "https://tailscale.com/licenses/tailscale",
+  TUNMode: false,
+  IsSynology: true,
+  DSMVersion: 7,
+  IsUnraid: false,
+  UnraidToken: "",
+  IPNVersion: "0.1.0",
 }
 
 // useNodeData returns basic data about the current node.
 export default function useNodeData() {
-  const [data, setData] = useState<NodeData>()
-  const [isPosting, setIsPosting] = useState<boolean>(false)
-
-  const refreshData = useCallback(
-    () =>
-      apiFetch("/data", "GET")
-        .then((r) => r.json())
-        .then((d: NodeData) => {
-          setData(d)
-          setUnraidCsrfToken(d.IsUnraid ? d.UnraidToken : undefined)
-        })
-        .catch((error) => console.error(error)),
-    [setData]
-  )
-
-  const updateNode = useCallback(
-    (update: NodeUpdate) => {
-      // The contents of this function are mostly copied over
-      // from the legacy client's web.html file.
-      // It makes all data updates through one API endpoint.
-      // As we build out the web client in React,
-      // this endpoint will eventually be deprecated.
-
-      if (isPosting || !data) {
-        return
-      }
-      setIsPosting(true)
-
-      update = {
-        ...update,
-        // Default to current data value for any unset fields.
-        AdvertiseRoutes:
-          update.AdvertiseRoutes !== undefined
-            ? update.AdvertiseRoutes
-            : data.AdvertiseRoutes,
-        AdvertiseExitNode:
-          update.AdvertiseExitNode !== undefined
-            ? update.AdvertiseExitNode
-            : data.AdvertiseExitNode,
-      }
-
-      apiFetch("/data", "POST", update, { up: "true" })
-        .then((r) => r.json())
-        .then((r) => {
-          setIsPosting(false)
-          const err = r["error"]
-          if (err) {
-            throw new Error(err)
-          }
-          const url = r["url"]
-          if (url) {
-            window.open(url, "_blank")
-          }
-          refreshData()
-        })
-        .catch((err) => alert("Failed operation: " + err.message))
-    },
-    [data]
-  )
-
-  useEffect(
-    () => {
-      // Initial data load.
-      refreshData()
-
-      // Refresh on browser tab focus.
-      const onVisibilityChange = () => {
-        document.visibilityState === "visible" && refreshData()
-      }
-      window.addEventListener("visibilitychange", onVisibilityChange)
-      return () => {
-        // Cleanup browser tab listener.
-        window.removeEventListener("visibilitychange", onVisibilityChange)
-      }
-    },
-    // Run once.
-    []
-  )
-
-  return { data, refreshData, updateNode, isPosting }
+  return testData
 }

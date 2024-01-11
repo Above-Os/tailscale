@@ -5,9 +5,7 @@ package ipnlocal
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,12 +17,12 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slices"
 	"tailscale.com/ipn"
 	"tailscale.com/logtail/backoff"
 	"tailscale.com/net/netutil"
@@ -34,11 +32,6 @@ import (
 	"tailscale.com/util/mak"
 	"tailscale.com/version"
 )
-
-// ErrETagMismatch signals that the given
-// If-Match header does not match with the
-// current etag of a resource.
-var ErrETagMismatch = errors.New("etag mismatch")
 
 // serveHTTPContextKey is the context.Value key for a *serveHTTPContext.
 type serveHTTPContextKey struct{}
@@ -200,14 +193,12 @@ func (b *LocalBackend) updateServeTCPPortNetMapAddrListenersLocked(ports []uint1
 		b.logf("netMap is nil")
 		return
 	}
-	if !nm.SelfNode.Valid() {
+	if nm.SelfNode == nil {
 		b.logf("netMap SelfNode is nil")
 		return
 	}
 
-	addrs := nm.GetAddresses()
-	for i := range addrs.LenIter() {
-		a := addrs.At(i)
+	for _, a := range nm.Addresses {
 		for _, p := range ports {
 			addrPort := netip.AddrPortFrom(a.Addr(), p)
 			if _, ok := b.serveListeners[addrPort]; ok {
@@ -223,15 +214,10 @@ func (b *LocalBackend) updateServeTCPPortNetMapAddrListenersLocked(ports []uint1
 }
 
 // SetServeConfig establishes or replaces the current serve config.
-// ETag is an optional parameter to enforce Optimistic Concurrency Control.
-// If it is an empty string, then the config will be overwritten.
-func (b *LocalBackend) SetServeConfig(config *ipn.ServeConfig, etag string) error {
+func (b *LocalBackend) SetServeConfig(config *ipn.ServeConfig) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.setServeConfigLocked(config, etag)
-}
 
-func (b *LocalBackend) setServeConfigLocked(config *ipn.ServeConfig, etag string) error {
 	prefs := b.pm.CurrentPrefs()
 	if config.IsFunnelOn() && prefs.ShieldsUp() {
 		return errors.New("Unable to turn on Funnel while shields-up is enabled")
@@ -241,28 +227,11 @@ func (b *LocalBackend) setServeConfigLocked(config *ipn.ServeConfig, etag string
 	if nm == nil {
 		return errors.New("netMap is nil")
 	}
-	if !nm.SelfNode.Valid() {
+	if nm.SelfNode == nil {
 		return errors.New("netMap SelfNode is nil")
 	}
-
-	// If etag is present, check that it has
-	// not changed from the last config.
-	prevConfig := b.serveConfig
-	if etag != "" {
-		// Note that we marshal b.serveConfig
-		// and not use b.lastServeConfJSON as that might
-		// be a Go nil value, which produces a different
-		// checksum from a JSON "null" value.
-		prevBytes, err := json.Marshal(prevConfig)
-		if err != nil {
-			return fmt.Errorf("error encoding previous config: %w", err)
-		}
-		sum := sha256.Sum256(prevBytes)
-		previousEtag := hex.EncodeToString(sum[:])
-		if etag != previousEtag {
-			return ErrETagMismatch
-		}
-	}
+	profileID := b.pm.CurrentProfile().ID
+	confKey := ipn.ServeConfigKey(profileID)
 
 	var bs []byte
 	if config != nil {
@@ -272,34 +241,11 @@ func (b *LocalBackend) setServeConfigLocked(config *ipn.ServeConfig, etag string
 		}
 		bs = j
 	}
-
-	profileID := b.pm.CurrentProfile().ID
-	confKey := ipn.ServeConfigKey(profileID)
 	if err := b.store.WriteState(confKey, bs); err != nil {
 		return fmt.Errorf("writing ServeConfig to StateStore: %w", err)
 	}
 
 	b.setTCPPortsInterceptedFromNetmapAndPrefsLocked(b.pm.CurrentPrefs())
-
-	// clean up and close all previously open foreground sessions
-	// if the current ServeConfig has overwritten them.
-	if prevConfig.Valid() {
-		has := func(string) bool { return false }
-		if b.serveConfig.Valid() {
-			has = b.serveConfig.Foreground().Has
-		}
-		prevConfig.Foreground().Range(func(k string, v ipn.ServeConfigView) (cont bool) {
-			if !has(k) {
-				for _, sess := range b.notifyWatchers {
-					if sess.sessionID == k {
-						close(sess.ch)
-					}
-				}
-			}
-			return true
-		})
-	}
-
 	return nil
 }
 
@@ -311,21 +257,7 @@ func (b *LocalBackend) ServeConfig() ipn.ServeConfigView {
 	return b.serveConfig
 }
 
-// DeleteForegroundSession deletes a ServeConfig's foreground session
-// in the LocalBackend if it exists. It also ensures check, delete, and
-// set operations happen within the same mutex lock to avoid any races.
-func (b *LocalBackend) DeleteForegroundSession(sessionID string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if !b.serveConfig.Valid() || !b.serveConfig.Foreground().Has(sessionID) {
-		return nil
-	}
-	sc := b.serveConfig.AsStruct()
-	delete(sc.Foreground, sessionID)
-	return b.setServeConfigLocked(sc, "")
-}
-
-func (b *LocalBackend) HandleIngressTCPConn(ingressPeer tailcfg.NodeView, target ipn.HostPort, srcAddr netip.AddrPort, getConnOrReset func() (net.Conn, bool), sendRST func()) {
+func (b *LocalBackend) HandleIngressTCPConn(ingressPeer *tailcfg.Node, target ipn.HostPort, srcAddr netip.AddrPort, getConnOrReset func() (net.Conn, bool), sendRST func()) {
 	b.mu.Lock()
 	sc := b.serveConfig
 	b.mu.Unlock()
@@ -336,7 +268,7 @@ func (b *LocalBackend) HandleIngressTCPConn(ingressPeer tailcfg.NodeView, target
 		return
 	}
 
-	if !sc.HasFunnelForTarget(target) {
+	if !sc.AllowFunnel().Get(target) {
 		b.logf("localbackend: got ingress conn for unconfigured %q; rejecting", target)
 		sendRST()
 		return
@@ -394,7 +326,7 @@ func (b *LocalBackend) tcpHandlerForServe(dport uint16, srcAddr netip.AddrPort) 
 		return nil
 	}
 
-	tcph, ok := sc.FindTCP(dport)
+	tcph, ok := sc.TCP().GetOk(dport)
 	if !ok {
 		b.logf("[unexpected] localbackend: got TCP conn without TCP config for port %v; from %v", dport, srcAddr)
 		return nil
@@ -589,8 +521,6 @@ func (b *LocalBackend) addTailscaleIdentityHeaders(r *httputil.ProxyRequest) {
 	r.Out.Header.Set("Tailscale-Headers-Info", "https://tailscale.com/s/serve-headers")
 }
 
-// serveWebHandler is an http.HandlerFunc that maps incoming requests to the
-// correct *http.
 func (b *LocalBackend) serveWebHandler(w http.ResponseWriter, r *http.Request) {
 	h, mountPoint, ok := b.getServeHandler(r)
 	if !ok {
@@ -732,7 +662,7 @@ func (b *LocalBackend) webServerConfig(hostname string, port uint16) (c ipn.WebS
 	if !b.serveConfig.Valid() {
 		return c, false
 	}
-	return b.serveConfig.FindWeb(key)
+	return b.serveConfig.Web().GetOk(key)
 }
 
 func (b *LocalBackend) getTLSServeCertForPort(port uint16) func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {

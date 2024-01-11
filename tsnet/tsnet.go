@@ -22,12 +22,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slices"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/control/controlclient"
 	"tailscale.com/envknob"
@@ -51,7 +51,6 @@ import (
 	"tailscale.com/types/logger"
 	"tailscale.com/types/logid"
 	"tailscale.com/types/nettype"
-	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/testenv"
 	"tailscale.com/wgengine"
@@ -349,6 +348,15 @@ func (s *Server) Close() error {
 		}
 	}()
 
+	if _, isMemStore := s.Store.(*mem.Store); isMemStore && s.Ephemeral && s.lb != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Perform a best-effort logout.
+			s.lb.LogoutSync(ctx)
+		}()
+	}
+
 	if s.netstack != nil {
 		s.netstack.Close()
 		s.netstack = nil
@@ -408,9 +416,7 @@ func (s *Server) TailscaleIPs() (ip4, ip6 netip.Addr) {
 	if nm == nil {
 		return
 	}
-	addrs := nm.GetAddresses()
-	for i := range addrs.LenIter() {
-		addr := addrs.At(i)
+	for _, addr := range nm.Addresses {
 		ip := addr.Addr()
 		if ip.Is6() {
 			ip6 = ip
@@ -503,7 +509,6 @@ func (s *Server) start() (reterr error) {
 		NetMon:       s.netMon,
 		Dialer:       s.dialer,
 		SetSubsystem: sys.Set,
-		ControlKnobs: sys.ControlKnobs(),
 	})
 	if err != nil {
 		return err
@@ -511,11 +516,10 @@ func (s *Server) start() (reterr error) {
 	closePool.add(s.dialer)
 	sys.Set(eng)
 
-	ns, err := netstack.Create(logf, sys.Tun.Get(), eng, sys.MagicSock.Get(), s.dialer, sys.DNSManager.Get(), sys.ProxyMapper())
+	ns, err := netstack.Create(logf, sys.Tun.Get(), eng, sys.MagicSock.Get(), s.dialer, sys.DNSManager.Get())
 	if err != nil {
 		return fmt.Errorf("netstack.Create: %w", err)
 	}
-	sys.Set(ns)
 	ns.ProcessLocalIPs = true
 	ns.GetTCPHandlerForFlow = s.getTCPHandlerForFlow
 	ns.GetUDPHandlerForFlow = s.getUDPHandlerForFlow
@@ -542,7 +546,7 @@ func (s *Server) start() (reterr error) {
 	if s.Ephemeral {
 		loginFlags = controlclient.LoginEphemeral
 	}
-	lb, err := ipnlocal.NewLocalBackend(logf, s.logid, sys, loginFlags|controlclient.LocalBackendStartKeyOSNeutral)
+	lb, err := ipnlocal.NewLocalBackend(logf, s.logid, sys, loginFlags)
 	if err != nil {
 		return fmt.Errorf("NewLocalBackend: %v", err)
 	}
@@ -554,6 +558,9 @@ func (s *Server) start() (reterr error) {
 		return fmt.Errorf("failed to start netstack: %w", err)
 	}
 	closePool.addFunc(func() { s.lb.Shutdown() })
+	lb.SetDecompressor(func() (controlclient.Decompressor, error) {
+		return smallzstd.NewDecoder(nil)
+	})
 	prefs := ipn.NewPrefs()
 	prefs.Hostname = s.hostname
 	prefs.WantRunning = true
@@ -632,8 +639,7 @@ func (s *Server) startLogger(closePool *closeOnErrorPool) error {
 			}
 			return w
 		},
-		HTTPC:        &http.Client{Transport: logpolicy.NewLogtailTransport(logtail.DefaultHost, s.netMon, s.logf)},
-		MetricsDelta: clientmetric.EncodeLogTailMetricsDelta,
+		HTTPC: &http.Client{Transport: logpolicy.NewLogtailTransport(logtail.DefaultHost, s.netMon, s.logf)},
 	}
 	s.logtail = logtail.NewLogger(c, s.logf)
 	closePool.addFunc(func() { s.logtail.Shutdown(context.Background()) })
@@ -926,7 +932,7 @@ func (s *Server) ListenFunnel(network, addr string, opts ...FunnelOption) (net.L
 	// flow here instead of CheckFunnelAccess to allow the user to turn on Funnel
 	// if not already on. Specifically when running from a terminal.
 	// See cli.serveEnv.verifyFunnelEnabled.
-	if err := ipn.CheckFunnelAccess(uint16(port), st.Self); err != nil {
+	if err := ipn.CheckFunnelAccess(uint16(port), st.Self.Capabilities); err != nil {
 		return nil, err
 	}
 

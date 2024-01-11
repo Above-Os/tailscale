@@ -5,10 +5,9 @@ package slicesx
 
 import (
 	"reflect"
-	"slices"
 	"testing"
 
-	qt "github.com/frankban/quicktest"
+	"golang.org/x/exp/slices"
 )
 
 func TestInterleave(t *testing.T) {
@@ -85,15 +84,4 @@ func TestPartition(t *testing.T) {
 	if !reflect.DeepEqual(odds, wantOdds) {
 		t.Errorf("odds: got %v, want %v", odds, wantOdds)
 	}
-}
-
-func TestEqualSameNil(t *testing.T) {
-	c := qt.New(t)
-	c.Check(EqualSameNil([]string{"a"}, []string{"a"}), qt.Equals, true)
-	c.Check(EqualSameNil([]string{"a"}, []string{"b"}), qt.Equals, false)
-	c.Check(EqualSameNil([]string{"a"}, []string{}), qt.Equals, false)
-	c.Check(EqualSameNil([]string{}, []string{}), qt.Equals, true)
-	c.Check(EqualSameNil(nil, []string{}), qt.Equals, false)
-	c.Check(EqualSameNil([]string{}, nil), qt.Equals, false)
-	c.Check(EqualSameNil[[]string](nil, nil), qt.Equals, true)
 }

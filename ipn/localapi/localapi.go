@@ -7,24 +7,25 @@ package localapi
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slices"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/envknob"
 	"tailscale.com/health"
@@ -36,6 +37,7 @@ import (
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/netutil"
 	"tailscale.com/net/portmapper"
+	"tailscale.com/net/tstun"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tka"
 	"tailscale.com/tstime"
@@ -48,9 +50,7 @@ import (
 	"tailscale.com/util/httpm"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/osdiag"
-	"tailscale.com/util/rands"
 	"tailscale.com/version"
-	"tailscale.com/wgengine/magicsock"
 )
 
 type localAPIHandler func(*Handler, http.ResponseWriter, *http.Request)
@@ -116,6 +116,12 @@ var handler = map[string]localAPIHandler{
 	"watch-ipn-bus":               (*Handler).serveWatchIPNBus,
 	"whois":                       (*Handler).serveWhoIs,
 	"query-feature":               (*Handler).serveQueryFeature,
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 var (
@@ -312,7 +318,7 @@ func (h *Handler) serveBugReport(w http.ResponseWriter, r *http.Request) {
 	defer h.b.TryFlushLogs() // kick off upload after bugreport's done logging
 
 	logMarker := func() string {
-		return fmt.Sprintf("BUG-%v-%v-%v", h.backendLogID, h.clock.Now().UTC().Format("20060102150405Z"), rands.HexString(16))
+		return fmt.Sprintf("BUG-%v-%v-%v", h.backendLogID, h.clock.Now().UTC().Format("20060102150405Z"), randHex(8))
 	}
 	if envknob.NoLogsNoSupport() {
 		logMarker = func() string { return "BUG-NO-LOGS-NO-SUPPORT-this-node-has-had-its-logging-disabled" }
@@ -333,8 +339,8 @@ func (h *Handler) serveBugReport(w http.ResponseWriter, r *http.Request) {
 
 	// Information about the current node from the netmap
 	if nm := h.b.NetMap(); nm != nil {
-		if self := nm.SelfNode; self.Valid() {
-			h.logf("user bugreport node info: nodeid=%q stableid=%q expiry=%q", self.ID(), self.StableID(), self.KeyExpiry().Format(time.RFC3339))
+		if self := nm.SelfNode; self != nil {
+			h.logf("user bugreport node info: nodeid=%q stableid=%q expiry=%q", self.ID, self.StableID, self.KeyExpiry.Format(time.RFC3339))
 		}
 		h.logf("user bugreport public keys: machine=%q node=%q", nm.MachineKey, nm.NodeKey)
 	} else {
@@ -431,8 +437,8 @@ func (h *Handler) serveWhoIs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := &apitype.WhoIsResponse{
-		Node:        n.AsStruct(), // always non-nil per WhoIsResponse contract
-		UserProfile: &u,           // always non-nil per WhoIsResponse contract
+		Node:        n,  // always non-nil per WhoIsResponse contract
+		UserProfile: &u, // always non-nil per WhoIsResponse contract
 		CapMap:      b.PeerCaps(ipp.Addr()),
 	}
 	j, err := json.MarshalIndent(res, "", "\t")
@@ -557,17 +563,6 @@ func (h *Handler) serveDebug(w http.ResponseWriter, r *http.Request) {
 		err = h.b.DebugBreakTCPConns()
 	case "break-derp-conns":
 		err = h.b.DebugBreakDERPConns()
-	case "force-netmap-update":
-		h.b.DebugForceNetmapUpdate()
-	case "control-knobs":
-		k := h.b.ControlKnobs()
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(k.AsDebugJSON())
-		if err == nil {
-			return
-		}
-	case "pick-new-derp":
-		err = h.b.DebugPickNewDERP()
 	case "":
 		err = fmt.Errorf("missing parameter 'action'")
 	default:
@@ -665,10 +660,6 @@ func (h *Handler) serveDebugPortmap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if defBool(r.FormValue("log_http"), false) {
-		debugKnobs.LogHTTP = true
-	}
-
 	var (
 		logLock     sync.Mutex
 		handlerDone bool
@@ -707,7 +698,7 @@ func (h *Handler) serveDebugPortmap(w http.ResponseWriter, r *http.Request) {
 	done := make(chan bool, 1)
 
 	var c *portmapper.Client
-	c = portmapper.NewClient(logger.WithPrefix(logf, "portmapper: "), h.netMon, debugKnobs, h.b.ControlKnobs(), func() {
+	c = portmapper.NewClient(logger.WithPrefix(logf, "portmapper: "), h.netMon, debugKnobs, func() {
 		logf("portmapping changed.")
 		logf("have mapping: %v", c.HaveMapping())
 
@@ -843,17 +834,9 @@ func (h *Handler) serveServeConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "serve config denied", http.StatusForbidden)
 			return
 		}
-		config := h.b.ServeConfig()
-		bts, err := json.Marshal(config)
-		if err != nil {
-			http.Error(w, "error encoding config: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		sum := sha256.Sum256(bts)
-		etag := hex.EncodeToString(sum[:])
-		w.Header().Set("Etag", etag)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(bts)
+		config := h.b.ServeConfig()
+		json.NewEncoder(w).Encode(config)
 	case "POST":
 		if !h.PermitWrite {
 			http.Error(w, "serve config denied", http.StatusForbidden)
@@ -864,12 +847,7 @@ func (h *Handler) serveServeConfig(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, fmt.Errorf("decoding config: %w", err))
 			return
 		}
-		etag := r.Header.Get("If-Match")
-		if err := h.b.SetServeConfig(configIn, etag); err != nil {
-			if errors.Is(err, ipnlocal.ErrETagMismatch) {
-				http.Error(w, err.Error(), http.StatusPreconditionFailed)
-				return
-			}
+		if err := h.b.SetServeConfig(configIn); err != nil {
 			writeErrorJSON(w, fmt.Errorf("updating config: %w", err))
 			return
 		}
@@ -1049,7 +1027,7 @@ func (h *Handler) serveLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "want POST", 400)
 		return
 	}
-	err := h.b.Logout(r.Context())
+	err := h.b.LogoutSync(r.Context())
 	if err == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -1384,8 +1362,8 @@ func (h *Handler) servePing(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "'size' parameter is only supported with disco pings", 400)
 			return
 		}
-		if size > magicsock.MaxDiscoPingSize {
-			http.Error(w, fmt.Sprintf("maximum value for 'size' is %v", magicsock.MaxDiscoPingSize), 400)
+		if size > int(tstun.DefaultMTU()) {
+			http.Error(w, fmt.Sprintf("maximum value for 'size' is %v", tstun.DefaultMTU()), 400)
 			return
 		}
 	}
@@ -1704,7 +1682,7 @@ func (h *Handler) serveTKADisable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := io.LimitReader(r.Body, 1024*1024)
-	secret, err := io.ReadAll(body)
+	secret, err := ioutil.ReadAll(body)
 	if err != nil {
 		http.Error(w, "reading secret", 400)
 		return
@@ -1777,7 +1755,7 @@ func (h *Handler) serveTKAAffectedSigs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "use POST", http.StatusMethodNotAllowed)
 		return
 	}
-	keyID, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2048))
+	keyID, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, 2048))
 	if err != nil {
 		http.Error(w, "reading body", http.StatusBadRequest)
 		return
@@ -1846,7 +1824,7 @@ func (h *Handler) serveTKACosignRecoveryAUM(w http.ResponseWriter, r *http.Reque
 	}
 
 	body := io.LimitReader(r.Body, 1024*1024)
-	aumBytes, err := io.ReadAll(body)
+	aumBytes, err := ioutil.ReadAll(body)
 	if err != nil {
 		http.Error(w, "reading AUM", http.StatusBadRequest)
 		return
@@ -1877,7 +1855,7 @@ func (h *Handler) serveTKASubmitRecoveryAUM(w http.ResponseWriter, r *http.Reque
 	}
 
 	body := io.LimitReader(r.Body, 1024*1024)
-	aumBytes, err := io.ReadAll(body)
+	aumBytes, err := ioutil.ReadAll(body)
 	if err != nil {
 		http.Error(w, "reading AUM", http.StatusBadRequest)
 		return

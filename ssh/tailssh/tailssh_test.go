@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -176,7 +177,7 @@ func TestMatchRule(t *testing.T) {
 				Principals: []*tailcfg.SSHPrincipal{{Node: "some-node-ID"}},
 				SSHUsers:   map[string]string{"*": "ubuntu"},
 			},
-			ci:       &sshConnInfo{node: (&tailcfg.Node{StableID: "some-node-ID"}).View()},
+			ci:       &sshConnInfo{node: &tailcfg.Node{StableID: "some-node-ID"}},
 			wantUser: "ubuntu",
 		},
 		{
@@ -275,18 +276,18 @@ func (ts *localState) NetMap() *netmap.NetworkMap {
 	}
 
 	return &netmap.NetworkMap{
-		SelfNode: (&tailcfg.Node{
+		SelfNode: &tailcfg.Node{
 			ID: 1,
-		}).View(),
+		},
 		SSHPolicy: policy,
 	}
 }
 
-func (ts *localState) WhoIs(ipp netip.AddrPort) (n tailcfg.NodeView, u tailcfg.UserProfile, ok bool) {
-	return (&tailcfg.Node{
+func (ts *localState) WhoIs(ipp netip.AddrPort) (n *tailcfg.Node, u tailcfg.UserProfile, ok bool) {
+	return &tailcfg.Node{
 			ID:       2,
 			StableID: "peer-id",
-		}).View(), tailcfg.UserProfile{
+		}, tailcfg.UserProfile{
 			LoginName: "peer",
 		}, true
 
@@ -561,7 +562,7 @@ func TestSSHRecordingNonInteractive(t *testing.T) {
 	recordingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		var err error
-		recording, err = io.ReadAll(r.Body)
+		recording, err = ioutil.ReadAll(r.Body)
 		if err != nil {
 			t.Error(err)
 			return
@@ -860,7 +861,7 @@ func TestSSH(t *testing.T) {
 		sshUser: "test",
 		src:     netip.MustParseAddrPort("1.2.3.4:32342"),
 		dst:     netip.MustParseAddrPort("1.2.3.5:22"),
-		node:    (&tailcfg.Node{}).View(),
+		node:    &tailcfg.Node{},
 		uprof:   tailcfg.UserProfile{},
 	}
 	sc.action0 = &tailcfg.SSHAction{Accept: true}

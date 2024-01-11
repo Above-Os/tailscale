@@ -11,13 +11,13 @@ import (
 	"log"
 	"net"
 	"net/netip"
-	"slices"
 	"sort"
 	"time"
 
 	ole "github.com/go-ole/go-ole"
 	"github.com/tailscale/wireguard-go/tun"
 	"go4.org/netipx"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 	"tailscale.com/health"
@@ -241,7 +241,7 @@ func interfaceFromLUID(luid winipcfg.LUID, flags winipcfg.GAAFlags) (*winipcfg.I
 var networkCategoryWarning = health.NewWarnable(health.WithMapDebugFlag("warn-network-category-unhealthy"))
 
 func configureInterface(cfg *Config, tun *tun.NativeTun) (retErr error) {
-	var mtu = tstun.DefaultTUNMTU()
+	var mtu = tstun.DefaultMTU()
 	luid := winipcfg.LUID(tun.LUID())
 	iface, err := interfaceFromLUID(luid,
 		// Issue 474: on early boot, when the network is still

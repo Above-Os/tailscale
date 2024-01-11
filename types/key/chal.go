@@ -72,14 +72,9 @@ func (k ChallengePublic) String() string {
 	return string(bs)
 }
 
-// AppendText implements encoding.TextAppender.
-func (k ChallengePublic) AppendText(b []byte) ([]byte, error) {
-	return appendHexKey(b, chalPublicHexPrefix, k.k[:]), nil
-}
-
 // MarshalText implements encoding.TextMarshaler.
 func (k ChallengePublic) MarshalText() ([]byte, error) {
-	return k.AppendText(nil)
+	return toHex(k.k[:], chalPublicHexPrefix), nil
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.

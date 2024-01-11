@@ -19,10 +19,10 @@ import (
 
 var synologyPackageCenter bool
 
-func getTargets() ([]dist.Target, error) {
+func getTargets(signers unixpkgs.Signers) ([]dist.Target, error) {
 	var ret []dist.Target
 
-	ret = append(ret, unixpkgs.Targets(unixpkgs.Signers{})...)
+	ret = append(ret, unixpkgs.Targets(signers)...)
 	// Synology packages can be built either for sideloading, or for
 	// distribution by Synology in their package center. When
 	// distributed through the package center, apps can request
@@ -33,7 +33,7 @@ func getTargets() ([]dist.Target, error) {
 	// Since only we can provide packages to Synology for
 	// distribution, we default to building the "sideload" variant of
 	// packages that we distribute on pkgs.tailscale.com.
-	ret = append(ret, synology.Targets(synologyPackageCenter, nil)...)
+	ret = append(ret, synology.Targets(synologyPackageCenter)...)
 	return ret, nil
 }
 

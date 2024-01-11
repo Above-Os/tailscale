@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
 	"os/user"
 	"runtime"
@@ -16,7 +15,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/dblohm7/wingoes"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -28,9 +26,6 @@ const (
 
 // ErrNoShell is returned when the shell process is not found.
 var ErrNoShell = errors.New("no Shell process is present")
-
-// ErrNoValue is returned when the value doesn't exist in the registry.
-var ErrNoValue = registry.ErrNotExist
 
 // GetDesktopPID searches the PID of the process that's running the
 // currently active desktop. Returns ErrNoShell if the shell is not present.
@@ -50,44 +45,44 @@ func GetDesktopPID() (uint32, error) {
 	return pid, nil
 }
 
-func getPolicyString(name string) (string, error) {
+func getPolicyString(name, defval string) string {
 	s, err := getRegStringInternal(regPolicyBase, name)
 	if err != nil {
 		// Fall back to the legacy path
-		return getRegString(name)
+		return getRegString(name, defval)
 	}
-	return s, err
+	return s
 }
 
-func getRegString(name string) (string, error) {
-	s, err := getRegStringInternal(regBase, name)
-	if err != nil {
-		return "", err
-	}
-	return s, err
-}
-
-func getPolicyInteger(name string) (uint64, error) {
+func getPolicyInteger(name string, defval uint64) uint64 {
 	i, err := getRegIntegerInternal(regPolicyBase, name)
 	if err != nil {
 		// Fall back to the legacy path
-		return getRegInteger(name)
+		return getRegInteger(name, defval)
 	}
-	return i, err
+	return i
 }
 
-func getRegInteger(name string) (uint64, error) {
+func getRegString(name, defval string) string {
+	s, err := getRegStringInternal(regBase, name)
+	if err != nil {
+		return defval
+	}
+	return s
+}
+
+func getRegInteger(name string, defval uint64) uint64 {
 	i, err := getRegIntegerInternal(regBase, name)
 	if err != nil {
-		return 0, err
+		return defval
 	}
-	return i, err
+	return i
 }
 
 func getRegStringInternal(subKey, name string) (string, error) {
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, subKey, registry.READ)
 	if err != nil {
-		if err != ErrNoValue {
+		if err != registry.ErrNotExist {
 			log.Printf("registry.OpenKey(%v): %v", subKey, err)
 		}
 		return "", err
@@ -96,7 +91,7 @@ func getRegStringInternal(subKey, name string) (string, error) {
 
 	val, _, err := key.GetStringValue(name)
 	if err != nil {
-		if err != ErrNoValue {
+		if err != registry.ErrNotExist {
 			log.Printf("registry.GetStringValue(%v): %v", name, err)
 		}
 		return "", err
@@ -117,7 +112,7 @@ func GetRegStrings(name string, defval []string) []string {
 func getRegStringsInternal(subKey, name string) ([]string, error) {
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, subKey, registry.READ)
 	if err != nil {
-		if err != ErrNoValue {
+		if err != registry.ErrNotExist {
 			log.Printf("registry.OpenKey(%v): %v", subKey, err)
 		}
 		return nil, err
@@ -126,7 +121,7 @@ func getRegStringsInternal(subKey, name string) ([]string, error) {
 
 	val, _, err := key.GetStringsValue(name)
 	if err != nil {
-		if err != ErrNoValue {
+		if err != registry.ErrNotExist {
 			log.Printf("registry.GetStringValue(%v): %v", name, err)
 		}
 		return nil, err
@@ -157,7 +152,7 @@ func DeleteRegValue(name string) error {
 
 func deleteRegValueInternal(subKey, name string) error {
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, subKey, registry.SET_VALUE)
-	if err == ErrNoValue {
+	if err == registry.ErrNotExist {
 		return nil
 	}
 	if err != nil {
@@ -167,7 +162,7 @@ func deleteRegValueInternal(subKey, name string) error {
 	defer key.Close()
 
 	err = key.DeleteValue(name)
-	if err == ErrNoValue {
+	if err == registry.ErrNotExist {
 		err = nil
 	}
 	return err
@@ -176,7 +171,7 @@ func deleteRegValueInternal(subKey, name string) error {
 func getRegIntegerInternal(subKey, name string) (uint64, error) {
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, subKey, registry.READ)
 	if err != nil {
-		if err != ErrNoValue {
+		if err != registry.ErrNotExist {
 			log.Printf("registry.OpenKey(%v): %v", subKey, err)
 		}
 		return 0, err
@@ -185,7 +180,7 @@ func getRegIntegerInternal(subKey, name string) (uint64, error) {
 
 	val, _, err := key.GetIntegerValue(name)
 	if err != nil {
-		if err != ErrNoValue {
+		if err != registry.ErrNotExist {
 			log.Printf("registry.GetIntegerValue(%v): %v", name, err)
 		}
 		return 0, err
@@ -555,59 +550,4 @@ func findHomeDirInRegistry(uid string) (dir string, err error) {
 		return "", err
 	}
 	return dir, nil
-}
-
-const (
-	_RESTART_NO_CRASH  = 1
-	_RESTART_NO_HANG   = 2
-	_RESTART_NO_PATCH  = 4
-	_RESTART_NO_REBOOT = 8
-)
-
-func registerForRestart(opts RegisterForRestartOpts) error {
-	var flags uint32
-
-	if !opts.RestartOnCrash {
-		flags |= _RESTART_NO_CRASH
-	}
-	if !opts.RestartOnHang {
-		flags |= _RESTART_NO_HANG
-	}
-	if !opts.RestartOnUpgrade {
-		flags |= _RESTART_NO_PATCH
-	}
-	if !opts.RestartOnReboot {
-		flags |= _RESTART_NO_REBOOT
-	}
-
-	var cmdLine *uint16
-	if opts.UseCmdLineArgs {
-		if len(opts.CmdLineArgs) == 0 {
-			// re-use our current args, excluding the exe name itself
-			opts.CmdLineArgs = os.Args[1:]
-		}
-
-		var b strings.Builder
-		for _, arg := range opts.CmdLineArgs {
-			if b.Len() > 0 {
-				b.WriteByte(' ')
-			}
-			b.WriteString(windows.EscapeArg(arg))
-		}
-
-		if b.Len() > 0 {
-			var err error
-			cmdLine, err = windows.UTF16PtrFromString(b.String())
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	hr := registerApplicationRestart(cmdLine, flags)
-	if e := wingoes.ErrorFromHRESULT(hr); e.Failed() {
-		return e
-	}
-
-	return nil
 }

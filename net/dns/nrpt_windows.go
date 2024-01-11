@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sys/windows/registry"
 	"tailscale.com/types/logger"
 	"tailscale.com/util/dnsname"
-	"tailscale.com/util/set"
 	"tailscale.com/util/winutil"
 )
 
@@ -159,14 +158,14 @@ func (db *nrptRuleDatabase) detectWriteAsGP() {
 	}
 
 	// Add *all* rules from the GP subkey into a set.
-	gpSubkeyMap := make(set.Set[string], len(gpSubkeyNames))
+	gpSubkeyMap := make(map[string]struct{}, len(gpSubkeyNames))
 	for _, gpSubkey := range gpSubkeyNames {
-		gpSubkeyMap.Add(strings.ToUpper(gpSubkey))
+		gpSubkeyMap[strings.ToUpper(gpSubkey)] = struct{}{}
 	}
 
 	// Remove *our* rules from the set.
 	for _, ourRuleID := range db.ruleIDs {
-		gpSubkeyMap.Delete(strings.ToUpper(ourRuleID))
+		delete(gpSubkeyMap, strings.ToUpper(ourRuleID))
 	}
 
 	// Any leftover rules do not belong to us. When group policy is being used

@@ -87,15 +87,21 @@ func (b Bool) MarshalJSON() ([]byte, error) {
 }
 
 func (b *Bool) UnmarshalJSON(j []byte) error {
-	switch string(j) {
-	case "true":
+	// Note: written with a bunch of ifs instead of a switch
+	// because I'm sure the Go compiler optimizes away these
+	// []byte->string allocations in an == comparison, but I'm too
+	// lazy to check whether that's true in a switch also.
+	if string(j) == "true" {
 		*b = "true"
-	case "false":
-		*b = "false"
-	case "null":
-		*b = "unset"
-	default:
-		return fmt.Errorf("invalid opt.Bool value %q", j)
+		return nil
 	}
-	return nil
+	if string(j) == "false" {
+		*b = "false"
+		return nil
+	}
+	if string(j) == "null" {
+		*b = "unset"
+		return nil
+	}
+	return fmt.Errorf("invalid opt.Bool value %q", j)
 }

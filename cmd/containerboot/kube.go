@@ -7,11 +7,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"net/netip"
 	"os"
 
 	"tailscale.com/kube"
@@ -34,7 +32,7 @@ func findKeyInKubeSecret(ctx context.Context, secretName string) (string, error)
 
 // storeDeviceInfo writes deviceID into the "device_id" data field of the kube
 // secret secretName.
-func storeDeviceInfo(ctx context.Context, secretName string, deviceID tailcfg.StableNodeID, fqdn string, addresses []netip.Prefix) error {
+func storeDeviceInfo(ctx context.Context, secretName string, deviceID tailcfg.StableNodeID, fqdn string) error {
 	// First check if the secret exists at all. Even if running on
 	// kubernetes, we do not necessarily store state in a k8s secret.
 	if _, err := kc.GetSecret(ctx, secretName); err != nil {
@@ -48,20 +46,10 @@ func storeDeviceInfo(ctx context.Context, secretName string, deviceID tailcfg.St
 		return err
 	}
 
-	var ips []string
-	for _, addr := range addresses {
-		ips = append(ips, addr.Addr().String())
-	}
-	deviceIPs, err := json.Marshal(ips)
-	if err != nil {
-		return err
-	}
-
 	m := &kube.Secret{
 		Data: map[string][]byte{
 			"device_id":   []byte(deviceID),
 			"device_fqdn": []byte(fqdn),
-			"device_ips":  deviceIPs,
 		},
 	}
 	return kc.StrategicMergePatchSecret(ctx, secretName, m, "tailscale-container")

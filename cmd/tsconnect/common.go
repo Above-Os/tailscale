@@ -1,8 +1,6 @@
 // Copyright (c) Tailscale Inc & AUTHORS
 // SPDX-License-Identifier: BSD-3-Clause
 
-//go:build !plan9
-
 package main
 
 import (
@@ -14,11 +12,11 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"time"
 
 	esbuild "github.com/evanw/esbuild/pkg/api"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -71,7 +69,7 @@ func commonSetup(dev bool) (*esbuild.BuildOptions, error) {
 				},
 			},
 		},
-		JSX: esbuild.JSXAutomatic,
+		JSXMode: esbuild.JSXModeAutomatic,
 	}, nil
 }
 
@@ -137,19 +135,16 @@ func runEsbuildServe(buildOptions esbuild.BuildOptions) {
 	if err != nil {
 		log.Fatalf("Cannot parse port: %v", err)
 	}
-	buildContext, ctxErr := esbuild.Context(buildOptions)
-	if ctxErr != nil {
-		log.Fatalf("Cannot create esbuild context: %v", err)
-	}
-	result, err := buildContext.Serve(esbuild.ServeOptions{
+	result, err := esbuild.Serve(esbuild.ServeOptions{
 		Port:     uint16(port),
 		Host:     host,
 		Servedir: "./",
-	})
+	}, buildOptions)
 	if err != nil {
 		log.Fatalf("Cannot start esbuild server: %v", err)
 	}
 	log.Printf("Listening on http://%s:%d\n", result.Host, result.Port)
+	result.Wait()
 }
 
 func runEsbuild(buildOptions esbuild.BuildOptions) esbuild.BuildResult {

@@ -14,7 +14,6 @@ import (
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 	"tailscale.com/types/logger"
-	"tailscale.com/util/set"
 )
 
 // LogSvcState obtains the state of the Windows service named rootSvcName and
@@ -79,7 +78,7 @@ func walkServices(rootSvcName string, callback walkSvcFunc) error {
 		}
 	}()
 
-	seen := set.Set[string]{}
+	seen := make(map[string]struct{})
 
 	for err == nil && len(deps) > 0 {
 		err = func() error {
@@ -88,7 +87,7 @@ func walkServices(rootSvcName string, callback walkSvcFunc) error {
 
 			deps = deps[:len(deps)-1]
 
-			seen.Add(curSvc.Name)
+			seen[curSvc.Name] = struct{}{}
 
 			curCfg, err := curSvc.Config()
 			if err != nil {
@@ -98,7 +97,7 @@ func walkServices(rootSvcName string, callback walkSvcFunc) error {
 			callback(curSvc, curCfg)
 
 			for _, depName := range curCfg.Dependencies {
-				if seen.Contains(depName) {
+				if _, ok := seen[depName]; ok {
 					continue
 				}
 

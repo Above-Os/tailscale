@@ -41,7 +41,6 @@ import (
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
-	"tailscale.com/util/rands"
 )
 
 var (
@@ -76,7 +75,7 @@ func TestOneNodeUpNoAuth(t *testing.T) {
 	n1.AwaitResponding()
 	n1.MustUp()
 
-	t.Logf("Got IP: %v", n1.AwaitIP4())
+	t.Logf("Got IP: %v", n1.AwaitIP())
 	n1.AwaitRunning()
 
 	d1.MustCleanShutdown(t)
@@ -118,36 +117,6 @@ func TestOneNodeExpiredKey(t *testing.T) {
 	n1.AwaitRunning()
 
 	d1.MustCleanShutdown(t)
-}
-
-func TestControlKnobs(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-	n1 := newTestNode(t, env)
-
-	d1 := n1.StartDaemon()
-	defer d1.MustCleanShutdown(t)
-	n1.AwaitResponding()
-	n1.MustUp()
-
-	t.Logf("Got IP: %v", n1.AwaitIP4())
-	n1.AwaitRunning()
-
-	cmd := n1.Tailscale("debug", "control-knobs")
-	cmd.Stdout = nil // in case --verbose-tailscale was set
-	cmd.Stderr = nil // in case --verbose-tailscale was set
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("control-knobs output:\n%s", out)
-	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := m["DisableUPnP"], true; got != want {
-		t.Errorf("control-knobs DisableUPnP = %v; want %v", got, want)
-	}
 }
 
 func TestCollectPanic(t *testing.T) {
@@ -212,7 +181,7 @@ func TestStateSavedOnStart(t *testing.T) {
 	n1.AwaitResponding()
 	n1.MustUp()
 
-	t.Logf("Got IP: %v", n1.AwaitIP4())
+	t.Logf("Got IP: %v", n1.AwaitIP())
 	n1.AwaitRunning()
 
 	p1 := n1.diskPrefs()
@@ -271,7 +240,7 @@ func TestOneNodeUpAuth(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	t.Logf("Got IP: %v", n1.AwaitIP4())
+	t.Logf("Got IP: %v", n1.AwaitIP())
 
 	n1.AwaitRunning()
 
@@ -324,92 +293,6 @@ func TestTwoNodes(t *testing.T) {
 	}); err != nil {
 		t.Error(err)
 	}
-
-	d1.MustCleanShutdown(t)
-	d2.MustCleanShutdown(t)
-}
-
-// tests two nodes where the first gets a incremental MapResponse (with only
-// PeersRemoved set) saying that the second node disappeared.
-func TestIncrementalMapUpdatePeersRemoved(t *testing.T) {
-	flakytest.Mark(t, "https://github.com/tailscale/tailscale/issues/3598")
-	t.Parallel()
-	env := newTestEnv(t)
-
-	// Create one node:
-	n1 := newTestNode(t, env)
-	d1 := n1.StartDaemon()
-	n1.AwaitListening()
-	n1.MustUp()
-	n1.AwaitRunning()
-
-	all := env.Control.AllNodes()
-	if len(all) != 1 {
-		t.Fatalf("expected 1 node, got %d nodes", len(all))
-	}
-	tnode1 := all[0]
-
-	n2 := newTestNode(t, env)
-	d2 := n2.StartDaemon()
-	n2.AwaitListening()
-	n2.MustUp()
-	n2.AwaitRunning()
-
-	all = env.Control.AllNodes()
-	if len(all) != 2 {
-		t.Fatalf("expected 2 node, got %d nodes", len(all))
-	}
-	var tnode2 *tailcfg.Node
-	for _, n := range all {
-		if n.ID != tnode1.ID {
-			tnode2 = n
-			break
-		}
-	}
-	if tnode2 == nil {
-		t.Fatalf("failed to find second node ID (two dups?)")
-	}
-
-	t.Logf("node1=%v, node2=%v", tnode1.ID, tnode2.ID)
-
-	if err := tstest.WaitFor(2*time.Second, func() error {
-		st := n1.MustStatus()
-		if len(st.Peer) == 0 {
-			return errors.New("no peers")
-		}
-		if len(st.Peer) > 1 {
-			return fmt.Errorf("got %d peers; want 1", len(st.Peer))
-		}
-		peer := st.Peer[st.Peers()[0]]
-		if peer.ID == st.Self.ID {
-			return errors.New("peer is self")
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("node1 saw node2")
-
-	// Now tell node1 that node2 is removed.
-	if !env.Control.AddRawMapResponse(tnode1.Key, &tailcfg.MapResponse{
-		PeersRemoved: []tailcfg.NodeID{tnode2.ID},
-	}) {
-		t.Fatalf("failed to add map response")
-	}
-
-	// And see that node1 saw that.
-	if err := tstest.WaitFor(2*time.Second, func() error {
-		st := n1.MustStatus()
-		if len(st.Peer) == 0 {
-			return nil
-		}
-		return fmt.Errorf("got %d peers; want 0", len(st.Peer))
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("node1 saw node2 disappear")
 
 	d1.MustCleanShutdown(t)
 	d2.MustCleanShutdown(t)
@@ -574,7 +457,7 @@ func TestNoControlConnWhenDown(t *testing.T) {
 
 	// Come up the first time.
 	n1.MustUp()
-	ip1 := n1.AwaitIP4()
+	ip1 := n1.AwaitIP()
 	n1.AwaitRunning()
 
 	// Then bring it down and stop the daemon.
@@ -590,7 +473,7 @@ func TestNoControlConnWhenDown(t *testing.T) {
 		t.Fatalf("after restart, state = %q; want %q", got, want)
 	}
 
-	ip2 := n1.AwaitIP4()
+	ip2 := n1.AwaitIP()
 	if ip1 != ip2 {
 		t.Errorf("IPs different: %q vs %q", ip1, ip2)
 	}
@@ -615,7 +498,7 @@ func TestOneNodeUpWindowsStyle(t *testing.T) {
 	n1.AwaitResponding()
 	n1.MustUp("--unattended")
 
-	t.Logf("Got IP: %v", n1.AwaitIP4())
+	t.Logf("Got IP: %v", n1.AwaitIP())
 	n1.AwaitRunning()
 
 	d1.MustCleanShutdown(t)
@@ -625,128 +508,111 @@ func TestOneNodeUpWindowsStyle(t *testing.T) {
 // tries to do bi-directional pings between them.
 func TestNATPing(t *testing.T) {
 	t.Parallel()
-	for _, v6 := range []bool{false, true} {
-		env := newTestEnv(t)
-		registerNode := func() (*testNode, key.NodePublic) {
-			n := newTestNode(t, env)
-			n.StartDaemon()
-			n.AwaitListening()
-			n.MustUp()
-			n.AwaitRunning()
-			k := n.MustStatus().Self.PublicKey
-			return n, k
-		}
-		n1, k1 := registerNode()
-		n2, k2 := registerNode()
+	env := newTestEnv(t)
+	registerNode := func() (*testNode, key.NodePublic) {
+		n := newTestNode(t, env)
+		n.StartDaemon()
+		n.AwaitListening()
+		n.MustUp()
+		n.AwaitRunning()
+		k := n.MustStatus().Self.PublicKey
+		return n, k
+	}
+	n1, k1 := registerNode()
+	n2, k2 := registerNode()
 
-		var n1IP, n2IP netip.Addr
-		if v6 {
-			n1IP = n1.AwaitIP6()
-			n2IP = n2.AwaitIP6()
-		} else {
-			n1IP = n1.AwaitIP4()
-			n2IP = n2.AwaitIP4()
-		}
+	n1IP := n1.AwaitIP()
+	n2IP := n2.AwaitIP()
 
-		n1ExternalIP := netip.MustParseAddr("100.64.1.1")
-		n2ExternalIP := netip.MustParseAddr("100.64.2.1")
-		if v6 {
-			n1ExternalIP = netip.MustParseAddr("fd7a:115c:a1e0::1a")
-			n2ExternalIP = netip.MustParseAddr("fd7a:115c:a1e0::1b")
-		}
+	n1ExternalIP := netip.MustParseAddr("100.64.1.1")
+	n2ExternalIP := netip.MustParseAddr("100.64.2.1")
 
-		tests := []struct {
-			name       string
-			pairs      []testcontrol.MasqueradePair
-			n1SeesN2IP netip.Addr
-			n2SeesN1IP netip.Addr
-		}{
-			{
-				name:       "no_nat",
-				n1SeesN2IP: n2IP,
-				n2SeesN1IP: n1IP,
-			},
-			{
-				name: "n1_has_external_ip",
-				pairs: []testcontrol.MasqueradePair{
-					{
-						Node:              k1,
-						Peer:              k2,
-						NodeMasqueradesAs: n1ExternalIP,
-					},
+	tests := []struct {
+		name       string
+		pairs      []testcontrol.MasqueradePair
+		n1SeesN2IP netip.Addr
+		n2SeesN1IP netip.Addr
+	}{
+		{
+			name:       "no_nat",
+			n1SeesN2IP: n2IP,
+			n2SeesN1IP: n1IP,
+		},
+		{
+			name: "n1_has_external_ip",
+			pairs: []testcontrol.MasqueradePair{
+				{
+					Node:              k1,
+					Peer:              k2,
+					NodeMasqueradesAs: n1ExternalIP,
 				},
-				n1SeesN2IP: n2IP,
-				n2SeesN1IP: n1ExternalIP,
 			},
-			{
-				name: "n2_has_external_ip",
-				pairs: []testcontrol.MasqueradePair{
-					{
-						Node:              k2,
-						Peer:              k1,
-						NodeMasqueradesAs: n2ExternalIP,
-					},
+			n1SeesN2IP: n2IP,
+			n2SeesN1IP: n1ExternalIP,
+		},
+		{
+			name: "n2_has_external_ip",
+			pairs: []testcontrol.MasqueradePair{
+				{
+					Node:              k2,
+					Peer:              k1,
+					NodeMasqueradesAs: n2ExternalIP,
 				},
-				n1SeesN2IP: n2ExternalIP,
-				n2SeesN1IP: n1IP,
 			},
-			{
-				name: "both_have_external_ips",
-				pairs: []testcontrol.MasqueradePair{
-					{
-						Node:              k1,
-						Peer:              k2,
-						NodeMasqueradesAs: n1ExternalIP,
-					},
-					{
-						Node:              k2,
-						Peer:              k1,
-						NodeMasqueradesAs: n2ExternalIP,
-					},
+			n1SeesN2IP: n2ExternalIP,
+			n2SeesN1IP: n1IP,
+		},
+		{
+			name: "both_have_external_ips",
+			pairs: []testcontrol.MasqueradePair{
+				{
+					Node:              k1,
+					Peer:              k2,
+					NodeMasqueradesAs: n1ExternalIP,
 				},
-				n1SeesN2IP: n2ExternalIP,
-				n2SeesN1IP: n1ExternalIP,
+				{
+					Node:              k2,
+					Peer:              k1,
+					NodeMasqueradesAs: n2ExternalIP,
+				},
 			},
-		}
+			n1SeesN2IP: n2ExternalIP,
+			n2SeesN1IP: n1ExternalIP,
+		},
+	}
 
-		for _, tc := range tests {
-			t.Run(fmt.Sprintf("v6=%t/%v", v6, tc.name), func(t *testing.T) {
-				env.Control.SetMasqueradeAddresses(tc.pairs)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env.Control.SetMasqueradeAddresses(tc.pairs)
 
-				ipIdx := 0
-				if v6 {
-					ipIdx = 1
-				}
+			s1 := n1.MustStatus()
+			n2AsN1Peer := s1.Peer[k2]
+			if got := n2AsN1Peer.TailscaleIPs[0]; got != tc.n1SeesN2IP {
+				t.Fatalf("n1 sees n2 as %v; want %v", got, tc.n1SeesN2IP)
+			}
 
-				s1 := n1.MustStatus()
-				n2AsN1Peer := s1.Peer[k2]
-				if got := n2AsN1Peer.TailscaleIPs[ipIdx]; got != tc.n1SeesN2IP {
-					t.Fatalf("n1 sees n2 as %v; want %v", got, tc.n1SeesN2IP)
-				}
+			s2 := n2.MustStatus()
+			n1AsN2Peer := s2.Peer[k1]
+			if got := n1AsN2Peer.TailscaleIPs[0]; got != tc.n2SeesN1IP {
+				t.Fatalf("n2 sees n1 as %v; want %v", got, tc.n2SeesN1IP)
+			}
 
-				s2 := n2.MustStatus()
-				n1AsN2Peer := s2.Peer[k1]
-				if got := n1AsN2Peer.TailscaleIPs[ipIdx]; got != tc.n2SeesN1IP {
-					t.Fatalf("n2 sees n1 as %v; want %v", got, tc.n2SeesN1IP)
-				}
+			if err := n1.Tailscale("ping", tc.n1SeesN2IP.String()).Run(); err != nil {
+				t.Fatal(err)
+			}
 
-				if err := n1.Tailscale("ping", tc.n1SeesN2IP.String()).Run(); err != nil {
-					t.Fatal(err)
-				}
+			if err := n1.Tailscale("ping", "-peerapi", tc.n1SeesN2IP.String()).Run(); err != nil {
+				t.Fatal(err)
+			}
 
-				if err := n1.Tailscale("ping", "-peerapi", tc.n1SeesN2IP.String()).Run(); err != nil {
-					t.Fatal(err)
-				}
+			if err := n2.Tailscale("ping", tc.n2SeesN1IP.String()).Run(); err != nil {
+				t.Fatal(err)
+			}
 
-				if err := n2.Tailscale("ping", tc.n2SeesN1IP.String()).Run(); err != nil {
-					t.Fatal(err)
-				}
-
-				if err := n2.Tailscale("ping", "-peerapi", tc.n2SeesN1IP.String()).Run(); err != nil {
-					t.Fatal(err)
-				}
-			})
-		}
+			if err := n2.Tailscale("ping", "-peerapi", tc.n2SeesN1IP.String()).Run(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -760,7 +626,7 @@ func TestLogoutRemovesAllPeers(t *testing.T) {
 		nodes[i].StartDaemon()
 		nodes[i].AwaitResponding()
 		nodes[i].MustUp()
-		nodes[i].AwaitIP4()
+		nodes[i].AwaitIP()
 		nodes[i].AwaitRunning()
 	}
 	expectedPeers := len(nodes) - 1
@@ -775,7 +641,7 @@ func TestLogoutRemovesAllPeers(t *testing.T) {
 			if err := tstest.WaitFor(20*time.Second, func() error {
 				return nodes[i].Ping(nodes[j])
 			}); err != nil {
-				t.Fatalf("ping %v -> %v: %v", nodes[i].AwaitIP4(), nodes[j].AwaitIP4(), err)
+				t.Fatalf("ping %v -> %v: %v", nodes[i].AwaitIP(), nodes[j].AwaitIP(), err)
 			}
 		}
 	}
@@ -800,7 +666,7 @@ func TestLogoutRemovesAllPeers(t *testing.T) {
 	nodes[0].MustUp() // This will create a new node
 	expectedPeers++
 
-	nodes[0].AwaitIP4()
+	nodes[0].AwaitIP()
 	wantNode0PeerCount(expectedPeers) // all existing peers and the new node
 }
 
@@ -894,9 +760,7 @@ func newTestNode(t *testing.T, env *testEnv) *testNode {
 	dir := t.TempDir()
 	sockFile := filepath.Join(dir, "tailscale.sock")
 	if len(sockFile) >= 104 {
-		// Maximum length for a unix socket on darwin. Try something else.
-		sockFile = filepath.Join(os.TempDir(), rands.HexString(8)+".sock")
-		t.Cleanup(func() { os.Remove(sockFile) })
+		t.Fatalf("sockFile path %q (len %v) is too long, must be < 104", sockFile, len(sockFile))
 	}
 	return &testNode{
 		env:       env,
@@ -1070,15 +934,6 @@ func (n *testNode) StartDaemonAsIPNGOOS(ipnGOOS string) *Daemon {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = io.MultiWriter(cmd.Stderr, os.Stderr)
 	}
-	if runtime.GOOS != "windows" {
-		pr, pw, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { pw.Close() })
-		cmd.ExtraFiles = append(cmd.ExtraFiles, pr)
-		cmd.Env = append(cmd.Env, "TS_PARENT_DEATH_FD=3")
-	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting tailscaled: %v", err)
 	}
@@ -1090,11 +945,9 @@ func (n *testNode) StartDaemonAsIPNGOOS(ipnGOOS string) *Daemon {
 
 func (n *testNode) MustUp(extraArgs ...string) {
 	t := n.env.t
-	t.Helper()
 	args := []string{
 		"up",
 		"--login-server=" + n.env.ControlServer.URL,
-		"--reset",
 	}
 	args = append(args, extraArgs...)
 	cmd := n.Tailscale(args...)
@@ -1124,8 +977,8 @@ func (n *testNode) MustLogOut() {
 
 func (n *testNode) Ping(otherNode *testNode) error {
 	t := n.env.t
-	ip := otherNode.AwaitIP4().String()
-	t.Logf("Running ping %v (from %v)...", ip, n.AwaitIP4())
+	ip := otherNode.AwaitIP().String()
+	t.Logf("Running ping %v (from %v)...", ip, n.AwaitIP())
 	return n.Tailscale("ping", ip).Run()
 }
 
@@ -1179,20 +1032,12 @@ func (n *testNode) AwaitIPs() []netip.Addr {
 	return addrs
 }
 
-// AwaitIP4 returns the IPv4 address of n.
-func (n *testNode) AwaitIP4() netip.Addr {
+// AwaitIP returns the IP address of n.
+func (n *testNode) AwaitIP() netip.Addr {
 	t := n.env.t
 	t.Helper()
 	ips := n.AwaitIPs()
 	return ips[0]
-}
-
-// AwaitIP6 returns the IPv6 address of n.
-func (n *testNode) AwaitIP6() netip.Addr {
-	t := n.env.t
-	t.Helper()
-	ips := n.AwaitIPs()
-	return ips[1]
 }
 
 // AwaitRunning waits for n to reach the IPN state "Running".

@@ -6,6 +6,8 @@ package controlclient
 import (
 	"reflect"
 	"testing"
+
+	"tailscale.com/types/empty"
 )
 
 func fieldsOf(t reflect.Type) (fields []string) {
@@ -19,7 +21,7 @@ func fieldsOf(t reflect.Type) (fields []string) {
 
 func TestStatusEqual(t *testing.T) {
 	// Verify that the Equal method stays in sync with reality
-	equalHandles := []string{"Err", "URL", "NetMap", "Persist", "state"}
+	equalHandles := []string{"LoginFinished", "LogoutFinished", "Err", "URL", "NetMap", "State", "Persist"}
 	if have := fieldsOf(reflect.TypeOf(Status{})); !reflect.DeepEqual(have, equalHandles) {
 		t.Errorf("Status.Equal check might be out of sync\nfields: %q\nhandled: %q\n",
 			have, equalHandles)
@@ -50,8 +52,18 @@ func TestStatusEqual(t *testing.T) {
 			true,
 		},
 		{
-			&Status{},
-			&Status{state: StateAuthenticated},
+			&Status{State: StateNew},
+			&Status{State: StateNew},
+			true,
+		},
+		{
+			&Status{State: StateNew},
+			&Status{State: StateAuthenticated},
+			false,
+		},
+		{
+			&Status{LoginFinished: nil},
+			&Status{LoginFinished: new(empty.Message)},
 			false,
 		},
 	}

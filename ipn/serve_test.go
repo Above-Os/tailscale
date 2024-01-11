@@ -5,33 +5,27 @@ package ipn
 import (
 	"testing"
 
-	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
 
 func TestCheckFunnelAccess(t *testing.T) {
-	caps := func(c ...tailcfg.NodeCapability) []tailcfg.NodeCapability { return c }
-	const portAttr tailcfg.NodeCapability = "https://tailscale.com/cap/funnel-ports?ports=443,8080-8090,8443,"
+	portAttr := "https://tailscale.com/cap/funnel-ports?ports=443,8080-8090,8443,"
 	tests := []struct {
 		port    uint16
-		caps    []tailcfg.NodeCapability
+		caps    []string
 		wantErr bool
 	}{
-		{443, caps(portAttr), true}, // No "funnel" attribute
-		{443, caps(portAttr, tailcfg.NodeAttrFunnel), true},
-		{443, caps(portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel), false},
-		{8443, caps(portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel), false},
-		{8321, caps(portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel), true},
-		{8083, caps(portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel), false},
-		{8091, caps(portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel), true},
-		{3000, caps(portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel), true},
+		{443, []string{portAttr}, true}, // No "funnel" attribute
+		{443, []string{portAttr, tailcfg.NodeAttrFunnel}, true},
+		{443, []string{portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel}, false},
+		{8443, []string{portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel}, false},
+		{8321, []string{portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel}, true},
+		{8083, []string{portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel}, false},
+		{8091, []string{portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel}, true},
+		{3000, []string{portAttr, tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel}, true},
 	}
 	for _, tt := range tests {
-		cm := tailcfg.NodeCapMap{}
-		for _, c := range tt.caps {
-			cm[c] = nil
-		}
-		err := CheckFunnelAccess(tt.port, &ipnstate.PeerStatus{CapMap: cm})
+		err := CheckFunnelAccess(tt.port, tt.caps)
 		switch {
 		case err != nil && tt.wantErr,
 			err == nil && !tt.wantErr:

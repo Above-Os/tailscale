@@ -8,10 +8,9 @@ package logknob
 import (
 	"sync/atomic"
 
+	"golang.org/x/exp/slices"
 	"tailscale.com/envknob"
-	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
-	"tailscale.com/types/views"
 )
 
 // TODO(andrew-d): should we have a package-global registry of logknobs? It
@@ -23,7 +22,7 @@ import (
 // c2n log level changes), and via capabilities from a NetMap (so users can
 // enable logging via the ACL JSON).
 type LogKnob struct {
-	capName tailcfg.NodeCapability
+	capName string
 	cap     atomic.Bool
 	env     func() bool
 	manual  atomic.Bool
@@ -31,7 +30,7 @@ type LogKnob struct {
 
 // NewLogKnob creates a new LogKnob, with the provided environment variable
 // name and/or NetMap capability.
-func NewLogKnob(env string, cap tailcfg.NodeCapability) *LogKnob {
+func NewLogKnob(env, cap string) *LogKnob {
 	if env == "" && cap == "" {
 		panic("must provide either an environment variable or capability")
 	}
@@ -59,7 +58,7 @@ func (lk *LogKnob) Set(v bool) {
 // about; we use this rather than a concrete type to avoid a circular
 // dependency.
 type NetMap interface {
-	SelfCapabilities() views.Slice[tailcfg.NodeCapability]
+	SelfCapabilities() []string
 }
 
 // UpdateFromNetMap will enable logging if the SelfNode in the provided NetMap
@@ -69,7 +68,7 @@ func (lk *LogKnob) UpdateFromNetMap(nm NetMap) {
 		return
 	}
 
-	lk.cap.Store(views.SliceContains(nm.SelfCapabilities(), lk.capName))
+	lk.cap.Store(slices.Contains(nm.SelfCapabilities(), lk.capName))
 }
 
 // Do will call log with the provided format and arguments if any of the

@@ -21,7 +21,6 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
-	"tailscale.com/types/logger"
 )
 
 func TestCleanMountPoint(t *testing.T) {
@@ -338,19 +337,19 @@ func TestServeConfigMutations(t *testing.T) {
 	add(step{reset: true})
 	add(step{ // must include scheme for tcp
 		command: cmd("tls-terminated-tcp:443 localhost:5432"),
-		wantErr: exactErr(errHelp, "errHelp"),
+		wantErr: exactErr(flag.ErrHelp, "flag.ErrHelp"),
 	})
 	add(step{ // !somehost, must be localhost or 127.0.0.1
 		command: cmd("tls-terminated-tcp:443 tcp://somehost:5432"),
-		wantErr: exactErr(errHelp, "errHelp"),
+		wantErr: exactErr(flag.ErrHelp, "flag.ErrHelp"),
 	})
 	add(step{ // bad target port, too low
 		command: cmd("tls-terminated-tcp:443 tcp://somehost:0"),
-		wantErr: exactErr(errHelp, "errHelp"),
+		wantErr: exactErr(flag.ErrHelp, "flag.ErrHelp"),
 	})
 	add(step{ // bad target port, too high
 		command: cmd("tls-terminated-tcp:443 tcp://somehost:65536"),
-		wantErr: exactErr(errHelp, "errHelp"),
+		wantErr: exactErr(flag.ErrHelp, "flag.ErrHelp"),
 	})
 	add(step{
 		command: cmd("tls-terminated-tcp:443 tcp://localhost:5432"),
@@ -471,7 +470,7 @@ func TestServeConfigMutations(t *testing.T) {
 	})
 	add(step{ // bad path
 		command: cmd("https:443 / bad/path"),
-		wantErr: exactErr(errHelp, "errHelp"),
+		wantErr: exactErr(flag.ErrHelp, "flag.ErrHelp"),
 	})
 	add(step{reset: true})
 	add(step{
@@ -665,7 +664,7 @@ func TestServeConfigMutations(t *testing.T) {
 	})
 	add(step{ // try to start a web handler on the same port
 		command: cmd("https:443 / localhost:3000"),
-		wantErr: exactErr(errHelp, "errHelp"),
+		wantErr: exactErr(flag.ErrHelp, "flag.ErrHelp"),
 	})
 	add(step{reset: true})
 	add(step{ // start a web handler on port 443
@@ -737,8 +736,8 @@ func TestServeConfigMutations(t *testing.T) {
 			got = lc.config
 		}
 		if !reflect.DeepEqual(got, st.want) {
-			t.Fatalf("[%d] %v: bad state. got:\n%v\n\nwant:\n%v\n",
-				i, st.command, logger.AsJSON(got), logger.AsJSON(st.want))
+			t.Fatalf("[%d] %v: bad state. got:\n%s\n\nwant:\n%s\n",
+				i, st.command, asJSON(got), asJSON(st.want))
 			// NOTE: asJSON will omit empty fields, which might make
 			// result in bad state got/want diffs being the same, even
 			// though the actual state is different. Use below to debug:
@@ -763,7 +762,7 @@ func TestVerifyFunnelEnabled(t *testing.T) {
 		// queryFeatureResponse is the mock response desired from the
 		// call made to lc.QueryFeature by verifyFunnelEnabled.
 		queryFeatureResponse mockQueryFeatureResponse
-		caps                 []tailcfg.NodeCapability // optionally set at fakeStatus.Capabilities
+		caps                 []string // optionally set at fakeStatus.Capabilities
 		wantErr              string
 		wantPanic            string
 	}{
@@ -780,13 +779,13 @@ func TestVerifyFunnelEnabled(t *testing.T) {
 		{
 			name:                 "fallback-flow-missing-acl-rule",
 			queryFeatureResponse: mockQueryFeatureResponse{resp: nil, err: errors.New("not-allowed")},
-			caps:                 []tailcfg.NodeCapability{tailcfg.CapabilityHTTPS},
+			caps:                 []string{tailcfg.CapabilityHTTPS},
 			wantErr:              `Funnel not available; "funnel" node attribute not set. See https://tailscale.com/s/no-funnel.`,
 		},
 		{
 			name:                 "fallback-flow-enabled",
 			queryFeatureResponse: mockQueryFeatureResponse{resp: nil, err: errors.New("not-allowed")},
-			caps:                 []tailcfg.NodeCapability{tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel},
+			caps:                 []string{tailcfg.CapabilityHTTPS, tailcfg.NodeAttrFunnel},
 			wantErr:              "", // no error, success
 		},
 		{
@@ -811,7 +810,7 @@ func TestVerifyFunnelEnabled(t *testing.T) {
 				defer func() { fakeStatus.Self.Capabilities = oldCaps }() // reset after test
 				fakeStatus.Self.Capabilities = tt.caps
 			}
-			st, err := e.getLocalClientStatusWithoutPeers(ctx)
+			st, err := e.getLocalClientStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -858,11 +857,11 @@ var fakeStatus = &ipnstate.Status{
 	BackendState: ipn.Running.String(),
 	Self: &ipnstate.PeerStatus{
 		DNSName:      "foo.test.ts.net",
-		Capabilities: []tailcfg.NodeCapability{tailcfg.NodeAttrFunnel, tailcfg.CapabilityFunnelPorts + "?ports=443,8443"},
+		Capabilities: []string{tailcfg.NodeAttrFunnel, tailcfg.CapabilityFunnelPorts + "?ports=443,8443"},
 	},
 }
 
-func (lc *fakeLocalServeClient) StatusWithoutPeers(ctx context.Context) (*ipnstate.Status, error) {
+func (lc *fakeLocalServeClient) Status(ctx context.Context) (*ipnstate.Status, error) {
 	return fakeStatus, nil
 }
 

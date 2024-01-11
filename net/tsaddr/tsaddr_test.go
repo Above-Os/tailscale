@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"tailscale.com/net/netaddr"
-	"tailscale.com/types/views"
 )
 
 func TestInCrostiniRange(t *testing.T) {
@@ -67,29 +66,29 @@ func TestCGNATRange(t *testing.T) {
 }
 
 func TestNewContainsIPFunc(t *testing.T) {
-	f := NewContainsIPFunc(views.SliceOf([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}))
+	f := NewContainsIPFunc([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	if f(netip.MustParseAddr("8.8.8.8")) {
 		t.Fatal("bad")
 	}
 	if !f(netip.MustParseAddr("10.1.2.3")) {
 		t.Fatal("bad")
 	}
-	f = NewContainsIPFunc(views.SliceOf([]netip.Prefix{netip.MustParsePrefix("10.1.2.3/32")}))
+	f = NewContainsIPFunc([]netip.Prefix{netip.MustParsePrefix("10.1.2.3/32")})
 	if !f(netip.MustParseAddr("10.1.2.3")) {
 		t.Fatal("bad")
 	}
-	f = NewContainsIPFunc(views.SliceOf([]netip.Prefix{
+	f = NewContainsIPFunc([]netip.Prefix{
 		netip.MustParsePrefix("10.1.2.3/32"),
 		netip.MustParsePrefix("::2/128"),
-	}))
+	})
 	if !f(netip.MustParseAddr("::2")) {
 		t.Fatal("bad")
 	}
-	f = NewContainsIPFunc(views.SliceOf([]netip.Prefix{
+	f = NewContainsIPFunc([]netip.Prefix{
 		netip.MustParsePrefix("10.1.2.3/32"),
 		netip.MustParsePrefix("10.1.2.4/32"),
 		netip.MustParsePrefix("::2/128"),
-	}))
+	})
 	if !f(netip.MustParseAddr("10.1.2.4")) {
 		t.Fatal("bad")
 	}

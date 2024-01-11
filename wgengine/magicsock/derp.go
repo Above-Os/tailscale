@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tailscale/wireguard-go/conn"
+	"tailscale.com/control/controlclient"
 	"tailscale.com/derp"
 	"tailscale.com/derp/derphttp"
 	"tailscale.com/health"
@@ -34,14 +35,15 @@ import (
 
 // useDerpRoute reports whether magicsock should enable the DERP
 // return path optimization (Issue 150).
-//
-// By default it's enabled, unless an environment variable
-// or control says to disable it.
-func (c *Conn) useDerpRoute() bool {
+func useDerpRoute() bool {
 	if b, ok := debugUseDerpRoute().Get(); ok {
 		return b
 	}
-	return c.controlKnobs == nil || !c.controlKnobs.DisableDRPO.Load()
+	ob := controlclient.DERPRouteFlag()
+	if v, ok := ob.Get(); ok {
+		return v
+	}
+	return true // as of 1.21.x
 }
 
 // derpRoute is a route entry for a public key, saying that a certain
@@ -293,7 +295,7 @@ func (c *Conn) derpWriteChanOfAddr(addr netip.AddrPort, peer key.NodePublic) cha
 	// perhaps peer's home is Frankfurt, but they dialed our home DERP
 	// node in SF to reach us, so we can reply to them using our
 	// SF connection rather than dialing Frankfurt. (Issue 150)
-	if !peer.IsZero() && c.useDerpRoute() {
+	if !peer.IsZero() && useDerpRoute() {
 		if r, ok := c.derpRoute[peer]; ok {
 			if ad, ok := c.activeDerp[r.derpID]; ok && ad.c == r.dc {
 				c.setPeerLastDerpLocked(peer, r.derpID, regionID)
@@ -663,7 +665,7 @@ func (c *Conn) processDERPReadResult(dm derpReadResult, b []byte) (n int, ep *en
 		return 0, nil
 	}
 
-	ep.noteRecvActivity(ipp)
+	ep.noteRecvActivity()
 	if stats := c.stats.Load(); stats != nil {
 		stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
 	}

@@ -8,7 +8,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -19,41 +18,37 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	xmaps "golang.org/x/exp/maps"
+	"golang.org/x/exp/maps"
 	"tailscale.com/cmd/testwrapper/flakytest"
 )
 
 const maxAttempts = 3
 
 type testAttempt struct {
-	pkg           string // "tailscale.com/types/key"
-	testName      string // "TestFoo"
+	name          testName
 	outcome       string // "pass", "fail", "skip"
 	logs          bytes.Buffer
-	isMarkedFlaky bool   // set if the test is marked as flaky
-	issueURL      string // set if the test is marked as flaky
+	isMarkedFlaky bool // set if the test is marked as flaky
 
 	pkgFinished bool
 }
 
-// packageTests describes what to run.
-// It's also JSON-marshalled to output for analysys tools to parse
-// so the fields are all exported.
-// TODO(bradfitz): move this type to its own types package?
+type testName struct {
+	pkg  string // "tailscale.com/types/key"
+	name string // "TestFoo"
+}
+
 type packageTests struct {
-	// Pattern is the package Pattern to run.
-	// Must be a single Pattern, not a list of patterns.
-	Pattern string // "./...", "./types/key"
-	// Tests is a list of Tests to run. If empty, all Tests in the package are
+	// pattern is the package pattern to run.
+	// Must be a single pattern, not a list of patterns.
+	pattern string // "./...", "./types/key"
+	// tests is a list of tests to run. If empty, all tests in the package are
 	// run.
-	Tests []string // ["TestFoo", "TestBar"]
-	// IssueURLs maps from a test name to a URL tracking its flake.
-	IssueURLs map[string]string // "TestFoo" => "https://github.com/foo/bar/issue/123"
+	tests []string // ["TestFoo", "TestBar"]
 }
 
 type goTestOutput struct {
@@ -68,15 +63,14 @@ var debug = os.Getenv("TS_TESTWRAPPER_DEBUG") != ""
 
 // runTests runs the tests in pt and sends the results on ch. It sends a
 // testAttempt for each test and a final testAttempt per pkg with pkgFinished
-// set to true. Package build errors will not emit a testAttempt (as no valid
-// JSON is produced) but the [os/exec.ExitError] will be returned.
+// set to true.
 // It calls close(ch) when it's done.
-func runTests(ctx context.Context, attempt int, pt *packageTests, otherArgs []string, ch chan<- *testAttempt) error {
+func runTests(ctx context.Context, attempt int, pt *packageTests, otherArgs []string, ch chan<- *testAttempt) {
 	defer close(ch)
-	args := []string{"test", "-json", pt.Pattern}
+	args := []string{"test", "-json", pt.pattern}
 	args = append(args, otherArgs...)
-	if len(pt.Tests) > 0 {
-		runArg := strings.Join(pt.Tests, "|")
+	if len(pt.tests) > 0 {
+		runArg := strings.Join(pt.tests, "|")
 		args = append(args, "-run", runArg)
 	}
 	if debug {
@@ -97,12 +91,17 @@ func runTests(ctx context.Context, attempt int, pt *packageTests, otherArgs []st
 		log.Printf("error starting test: %v", err)
 		os.Exit(1)
 	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cmd.Wait()
+	}()
 
-	s := bufio.NewScanner(r)
-	resultMap := make(map[string]map[string]*testAttempt) // pkg -> test -> testAttempt
-	for s.Scan() {
+	jd := json.NewDecoder(r)
+	resultMap := make(map[testName]*testAttempt)
+	for {
 		var goOutput goTestOutput
-		if err := json.Unmarshal(s.Bytes(), &goOutput); err != nil {
+		if err := jd.Decode(&goOutput); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
 				break
 			}
@@ -112,39 +111,32 @@ func runTests(ctx context.Context, attempt int, pt *packageTests, otherArgs []st
 			// The build error will be printed to stderr.
 			// See: https://github.com/golang/go/issues/35169
 			if _, ok := err.(*json.SyntaxError); ok {
-				fmt.Println(s.Text())
+				jd = json.NewDecoder(r)
 				continue
 			}
 			panic(err)
 		}
-		pkg := goOutput.Package
-		pkgTests := resultMap[pkg]
 		if goOutput.Test == "" {
 			switch goOutput.Action {
 			case "fail", "pass", "skip":
-				for _, test := range pkgTests {
-					if test.outcome == "" {
-						test.outcome = "fail"
-						ch <- test
-					}
-				}
 				ch <- &testAttempt{
-					pkg:         goOutput.Package,
+					name: testName{
+						pkg: goOutput.Package,
+					},
 					outcome:     goOutput.Action,
 					pkgFinished: true,
 				}
 			}
 			continue
 		}
-		if pkgTests == nil {
-			pkgTests = make(map[string]*testAttempt)
-			resultMap[pkg] = pkgTests
+		name := testName{
+			pkg:  goOutput.Package,
+			name: goOutput.Test,
 		}
-		testName := goOutput.Test
 		if test, _, isSubtest := strings.Cut(goOutput.Test, "/"); isSubtest {
-			testName = test
+			name.name = test
 			if goOutput.Action == "output" {
-				resultMap[pkg][testName].logs.WriteString(goOutput.Output)
+				resultMap[name].logs.WriteString(goOutput.Output)
 			}
 			continue
 		}
@@ -152,29 +144,21 @@ func runTests(ctx context.Context, attempt int, pt *packageTests, otherArgs []st
 		case "start":
 			// ignore
 		case "run":
-			pkgTests[testName] = &testAttempt{
-				pkg:      pkg,
-				testName: testName,
+			resultMap[name] = &testAttempt{
+				name: name,
 			}
 		case "skip", "pass", "fail":
-			pkgTests[testName].outcome = goOutput.Action
-			ch <- pkgTests[testName]
+			resultMap[name].outcome = goOutput.Action
+			ch <- resultMap[name]
 		case "output":
-			if suffix, ok := strings.CutPrefix(strings.TrimSpace(goOutput.Output), flakytest.FlakyTestLogMessage); ok {
-				pkgTests[testName].isMarkedFlaky = true
-				pkgTests[testName].issueURL = strings.TrimPrefix(suffix, ": ")
+			if strings.TrimSpace(goOutput.Output) == flakytest.FlakyTestLogMessage {
+				resultMap[name].isMarkedFlaky = true
 			} else {
-				pkgTests[testName].logs.WriteString(goOutput.Output)
+				resultMap[name].logs.WriteString(goOutput.Output)
 			}
 		}
 	}
-	if err := cmd.Wait(); err != nil {
-		return err
-	}
-	if err := s.Err(); err != nil {
-		return fmt.Errorf("reading go test stdout: %w", err)
-	}
-	return nil
+	<-done
 }
 
 func main() {
@@ -217,12 +201,12 @@ func main() {
 
 	type nextRun struct {
 		tests   []*packageTests
-		attempt int // starting at 1
+		attempt int
 	}
 
 	toRun := []*nextRun{
 		{
-			tests:   []*packageTests{{Pattern: pattern}},
+			tests:   []*packageTests{{pattern: pattern}},
 			attempt: 1,
 		},
 	}
@@ -248,41 +232,22 @@ func main() {
 		var thisRun *nextRun
 		thisRun, toRun = toRun[0], toRun[1:]
 
-		if thisRun.attempt > maxAttempts {
+		if thisRun.attempt >= maxAttempts {
 			fmt.Println("max attempts reached")
 			os.Exit(1)
 		}
 		if thisRun.attempt > 1 {
-			j, _ := json.Marshal(thisRun.tests)
-			fmt.Printf("\n\nAttempt #%d: Retrying flaky tests:\n\nflakytest failures JSON: %s\n\n", thisRun.attempt, j)
+			fmt.Printf("\n\nAttempt #%d: Retrying flaky tests:\n\n", thisRun.attempt)
 		}
 
-		toRetry := make(map[string][]*testAttempt) // pkg -> tests to retry
+		failed := false
+		toRetry := make(map[string][]string) // pkg -> tests to retry
 		for _, pt := range thisRun.tests {
 			ch := make(chan *testAttempt)
-			runErr := make(chan error, 1)
-			go func() {
-				defer close(runErr)
-				runErr <- runTests(ctx, thisRun.attempt, pt, otherArgs, ch)
-			}()
-
-			var failed bool
+			go runTests(ctx, thisRun.attempt, pt, otherArgs, ch)
 			for tr := range ch {
-				// Go assigns the package name "command-line-arguments" when you
-				// `go test FILE` rather than `go test PKG`. It's more
-				// convenient for us to to specify files in tests, so fix tr.pkg
-				// so that subsequent testwrapper attempts run correctly.
-				if tr.pkg == "command-line-arguments" {
-					tr.pkg = pattern
-				}
 				if tr.pkgFinished {
-					if tr.outcome == "fail" && len(toRetry[tr.pkg]) == 0 {
-						// If a package fails and we don't have any tests to
-						// retry, then we should fail. This typically happens
-						// when a package times out.
-						failed = true
-					}
-					printPkgOutcome(tr.pkg, tr.outcome, thisRun.attempt)
+					printPkgOutcome(tr.name.pkg, tr.outcome, thisRun.attempt)
 					continue
 				}
 				if *v || tr.outcome == "fail" {
@@ -292,50 +257,30 @@ func main() {
 					continue
 				}
 				if tr.isMarkedFlaky {
-					toRetry[tr.pkg] = append(toRetry[tr.pkg], tr)
+					toRetry[tr.name.pkg] = append(toRetry[tr.name.pkg], tr.name.name)
 				} else {
 					failed = true
 				}
 			}
-			if failed {
-				fmt.Println("\n\nNot retrying flaky tests because non-flaky tests failed.")
-				os.Exit(1)
-			}
-
-			// If there's nothing to retry and no non-retryable tests have
-			// failed then we've probably hit a build error.
-			if err := <-runErr; len(toRetry) == 0 && err != nil {
-				var exit *exec.ExitError
-				if errors.As(err, &exit) {
-					if code := exit.ExitCode(); code > -1 {
-						os.Exit(exit.ExitCode())
-					}
-				}
-				log.Printf("testwrapper: %s", err)
-				os.Exit(1)
-			}
+		}
+		if failed {
+			fmt.Println("\n\nNot retrying flaky tests because non-flaky tests failed.")
+			os.Exit(1)
 		}
 		if len(toRetry) == 0 {
 			continue
 		}
-		pkgs := xmaps.Keys(toRetry)
+		pkgs := maps.Keys(toRetry)
 		sort.Strings(pkgs)
 		nextRun := &nextRun{
 			attempt: thisRun.attempt + 1,
 		}
 		for _, pkg := range pkgs {
 			tests := toRetry[pkg]
-			slices.SortFunc(tests, func(a, b *testAttempt) int { return strings.Compare(a.testName, b.testName) })
-			issueURLs := map[string]string{} // test name => URL
-			var testNames []string
-			for _, ta := range tests {
-				issueURLs[ta.testName] = ta.issueURL
-				testNames = append(testNames, ta.testName)
-			}
+			sort.Strings(tests)
 			nextRun.tests = append(nextRun.tests, &packageTests{
-				Pattern:   pkg,
-				Tests:     testNames,
-				IssueURLs: issueURLs,
+				pattern: pkg,
+				tests:   tests,
 			})
 		}
 		toRun = append(toRun, nextRun)

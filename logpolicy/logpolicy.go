@@ -65,8 +65,7 @@ func getLogTarget() string {
 			getLogTargetOnce.v = val
 		} else {
 			if runtime.GOOS == "windows" {
-				logTarget, _ := winutil.GetRegString("LogTarget")
-				getLogTargetOnce.v = logTarget
+				getLogTargetOnce.v = winutil.GetRegString("LogTarget", "")
 			}
 		}
 	})

@@ -21,14 +21,11 @@ import (
 	"fmt"
 	"reflect"
 
-	"tailscale.com/control/controlknobs"
 	"tailscale.com/ipn"
 	"tailscale.com/net/dns"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/net/tstun"
-	"tailscale.com/proxymap"
-	"tailscale.com/types/netmap"
 	"tailscale.com/wgengine"
 	"tailscale.com/wgengine/magicsock"
 	"tailscale.com/wgengine/router"
@@ -45,17 +42,6 @@ type System struct {
 	Router         SubSystem[router.Router]
 	Tun            SubSystem[*tstun.Wrapper]
 	StateStore     SubSystem[ipn.StateStore]
-	Netstack       SubSystem[NetstackImpl] // actually a *netstack.Impl
-
-	controlKnobs controlknobs.Knobs
-	proxyMap     proxymap.Mapper
-}
-
-// NetstackImpl is the interface that *netstack.Impl implements.
-// It's an interface for circular dependency reasons: netstack.Impl
-// references LocalBackend, and LocalBackend has a tsd.System.
-type NetstackImpl interface {
-	UpdateNetstackIPs(*netmap.NetworkMap)
 }
 
 // Set is a convenience method to set a subsystem value.
@@ -79,8 +65,6 @@ func (s *System) Set(v any) {
 		s.MagicSock.Set(v)
 	case ipn.StateStore:
 		s.StateStore.Set(v)
-	case NetstackImpl:
-		s.Netstack.Set(v)
 	default:
 		panic(fmt.Sprintf("unknown type %T", v))
 	}
@@ -99,16 +83,6 @@ func (s *System) IsNetstackRouter() bool {
 func (s *System) IsNetstack() bool {
 	name, _ := s.Tun.Get().Name()
 	return name == tstun.FakeTUNName
-}
-
-// ControlKnobs returns the control knobs for this node.
-func (s *System) ControlKnobs() *controlknobs.Knobs {
-	return &s.controlKnobs
-}
-
-// ProxyMapper returns the ephemeral ip:port mapper.
-func (s *System) ProxyMapper() *proxymap.Mapper {
-	return &s.proxyMap
 }
 
 // SubSystem represents some subsystem of the Tailscale node daemon.

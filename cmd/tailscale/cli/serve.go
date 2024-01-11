@@ -23,8 +23,8 @@ import (
 	"strings"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
+	"golang.org/x/exp/slices"
 	"tailscale.com/client/tailscale"
-	"tailscale.com/envknob"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -32,16 +32,7 @@ import (
 	"tailscale.com/version"
 )
 
-var serveCmd = func() *ffcli.Command {
-	se := &serveEnv{lc: &localClient}
-	// This flag is used to switch to an in-development
-	// implementation of the tailscale funnel command.
-	// See https://github.com/tailscale/tailscale/issues/7844
-	if envknob.UseWIPCode() {
-		return newServeDevCommand(se, serve)
-	}
-	return newServeCommand(se)
-}
+var serveCmd = newServeCommand(&serveEnv{lc: &localClient})
 
 // newServeCommand returns a new "serve" subcommand using e as its environment.
 func newServeCommand(e *serveEnv) *ffcli.Command {
@@ -119,10 +110,6 @@ EXAMPLES
 	}
 }
 
-// errHelp is standard error text that prompts users to
-// run `serve --help` for information on how to use serve.
-var errHelp = errors.New("try `tailscale serve --help` for usage info")
-
 func (e *serveEnv) newFlags(name string, setup func(fs *flag.FlagSet)) *flag.FlagSet {
 	onError, out := flag.ExitOnError, Stderr
 	if e.testFlagOut != nil {
@@ -142,7 +129,7 @@ func (e *serveEnv) newFlags(name string, setup func(fs *flag.FlagSet)) *flag.Fla
 //
 // The purpose of this interface is to allow tests to provide a mock.
 type localServeClient interface {
-	StatusWithoutPeers(context.Context) (*ipnstate.Status, error)
+	Status(context.Context) (*ipnstate.Status, error)
 	GetServeConfig(context.Context) (*ipn.ServeConfig, error)
 	SetServeConfig(context.Context, *ipn.ServeConfig) error
 	QueryFeature(ctx context.Context, feature string) (*tailcfg.QueryFeatureResponse, error)
@@ -157,17 +144,8 @@ type localServeClient interface {
 //
 // It also contains the flags, as registered with newServeCommand.
 type serveEnv struct {
-	// v1 flags
+	// flags
 	json bool // output JSON (status only for now)
-
-	// v2 specific flags
-	bg               bool      // background mode
-	setPath          string    // serve path
-	https            string    // HTTP port
-	http             string    // HTTP port
-	tcp              string    // TCP port
-	tlsTerminatedTCP string    // a TLS terminated TCP port
-	subcmd           serveMode // subcommand
 
 	lc localServeClient // localClient interface, specific to serve
 
@@ -180,21 +158,19 @@ type serveEnv struct {
 // The trailing dot is removed.
 // Returns an error if local client status fails.
 func (e *serveEnv) getSelfDNSName(ctx context.Context) (string, error) {
-	st, err := e.getLocalClientStatusWithoutPeers(ctx)
+	st, err := e.getLocalClientStatus(ctx)
 	if err != nil {
 		return "", fmt.Errorf("getting client status: %w", err)
 	}
 	return strings.TrimSuffix(st.Self.DNSName, "."), nil
 }
 
-// getLocalClientStatusWithoutPeers returns the Status of the local client
-// without any peers in the response.
-//
+// getLocalClientStatus returns the Status of the local client.
 // Returns error if unable to reach tailscaled or if self node is nil.
 //
 // Exits if status is not running or starting.
-func (e *serveEnv) getLocalClientStatusWithoutPeers(ctx context.Context) (*ipnstate.Status, error) {
-	st, err := e.lc.StatusWithoutPeers(ctx)
+func (e *serveEnv) getLocalClientStatus(ctx context.Context) (*ipnstate.Status, error) {
+	st, err := e.lc.Status(ctx)
 	if err != nil {
 		return nil, fixTailscaledConnectError(err)
 	}
@@ -255,7 +231,7 @@ func (e *serveEnv) runServe(ctx context.Context, args []string) error {
 
 	if len(args) < 2 || ((srcType == "https" || srcType == "http") && !turnOff && len(args) < 3) {
 		fmt.Fprintf(os.Stderr, "error: invalid number of arguments\n\n")
-		return errHelp
+		return flag.ErrHelp
 	}
 
 	if srcType == "https" && !turnOff {
@@ -268,7 +244,9 @@ func (e *serveEnv) runServe(ctx context.Context, args []string) error {
 		// on, enableFeatureInteractive will error. For now, we hide that
 		// error and maintain the previous behavior (prior to 2023-08-15)
 		// of letting them edit the serve config before enabling certs.
-		e.enableFeatureInteractive(ctx, "serve", tailcfg.CapabilityHTTPS)
+		e.enableFeatureInteractive(ctx, "serve", func(caps []string) bool {
+			return slices.Contains(caps, tailcfg.CapabilityHTTPS)
+		})
 	}
 
 	srcPort, err := parseServePort(srcPortStr)
@@ -295,7 +273,7 @@ func (e *serveEnv) runServe(ctx context.Context, args []string) error {
 	default:
 		fmt.Fprintf(os.Stderr, "error: invalid serve type %q\n", srcType)
 		fmt.Fprint(os.Stderr, "must be one of: http:<port>, https:<port>, tcp:<port> or tls-terminated-tcp:<port>\n\n", srcType)
-		return errHelp
+		return flag.ErrHelp
 	}
 }
 
@@ -331,13 +309,13 @@ func (e *serveEnv) handleWebServe(ctx context.Context, srvPort uint16, useTLS bo
 		}
 		if !filepath.IsAbs(source) {
 			fmt.Fprintf(os.Stderr, "error: path must be absolute\n\n")
-			return errHelp
+			return flag.ErrHelp
 		}
 		source = filepath.Clean(source)
 		fi, err := os.Stat(source)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: invalid path: %v\n\n", err)
-			return errHelp
+			return flag.ErrHelp
 		}
 		if fi.IsDir() && !strings.HasSuffix(mount, "/") {
 			// dir mount points must end in /
@@ -363,7 +341,7 @@ func (e *serveEnv) handleWebServe(ctx context.Context, srvPort uint16, useTLS bo
 
 	if sc.IsTCPForwardingOnPort(srvPort) {
 		fmt.Fprintf(os.Stderr, "error: cannot serve web; already serving TCP\n")
-		return errHelp
+		return flag.ErrHelp
 	}
 
 	mak.Set(&sc.TCP, srvPort, &ipn.TCPPortHandler{HTTPS: useTLS, HTTP: !useTLS})
@@ -551,18 +529,18 @@ func (e *serveEnv) handleTCPServe(ctx context.Context, srcType string, srcPort u
 		terminateTLS = true
 	default:
 		fmt.Fprintf(os.Stderr, "error: invalid TCP source %q\n\n", dest)
-		return errHelp
+		return flag.ErrHelp
 	}
 
 	dstURL, err := url.Parse(dest)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid TCP source %q: %v\n\n", dest, err)
-		return errHelp
+		return flag.ErrHelp
 	}
 	host, dstPortStr, err := net.SplitHostPort(dstURL.Host)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid TCP source %q: %v\n\n", dest, err)
-		return errHelp
+		return flag.ErrHelp
 	}
 
 	switch host {
@@ -571,12 +549,12 @@ func (e *serveEnv) handleTCPServe(ctx context.Context, srcType string, srcPort u
 	default:
 		fmt.Fprintf(os.Stderr, "error: invalid TCP source %q\n", dest)
 		fmt.Fprint(os.Stderr, "must be one of: localhost or 127.0.0.1\n\n", dest)
-		return errHelp
+		return flag.ErrHelp
 	}
 
 	if p, err := strconv.ParseUint(dstPortStr, 10, 16); p == 0 || err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid port %q\n\n", dstPortStr)
-		return errHelp
+		return flag.ErrHelp
 	}
 
 	cursc, err := e.lc.GetServeConfig(ctx)
@@ -663,7 +641,7 @@ func (e *serveEnv) runServeStatus(ctx context.Context, args []string) error {
 		printf("No serve config\n")
 		return nil
 	}
-	st, err := e.getLocalClientStatusWithoutPeers(ctx)
+	st, err := e.getLocalClientStatus(ctx)
 	if err != nil {
 		return err
 	}
@@ -826,7 +804,7 @@ func parseServePort(s string) (uint16, error) {
 //
 // 2023-08-09: The only valid feature values are "serve" and "funnel".
 // This can be moved to some CLI lib when expanded past serve/funnel.
-func (e *serveEnv) enableFeatureInteractive(ctx context.Context, feature string, caps ...tailcfg.NodeCapability) (err error) {
+func (e *serveEnv) enableFeatureInteractive(ctx context.Context, feature string, hasRequiredCapabilities func(caps []string) bool) (err error) {
 	info, err := e.lc.QueryFeature(ctx, feature)
 	if err != nil {
 		return err
@@ -871,17 +849,8 @@ func (e *serveEnv) enableFeatureInteractive(ctx context.Context, feature string,
 			e.lc.IncrementCounter(ctx, fmt.Sprintf("%s_enablement_lost_connection", feature), 1)
 			return err
 		}
-		if nm := n.NetMap; nm != nil && nm.SelfNode.Valid() {
-			gotAll := true
-			for _, c := range caps {
-				if !nm.SelfNode.HasCap(c) {
-					// The feature is not yet enabled.
-					// Continue blocking until it is.
-					gotAll = false
-					break
-				}
-			}
-			if gotAll {
+		if nm := n.NetMap; nm != nil && nm.SelfNode != nil {
+			if hasRequiredCapabilities(nm.SelfNode.Capabilities) {
 				e.lc.IncrementCounter(ctx, fmt.Sprintf("%s_enabled", feature), 1)
 				fmt.Fprintln(os.Stdout, "Success.")
 				return nil

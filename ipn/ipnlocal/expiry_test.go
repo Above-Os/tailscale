@@ -44,38 +44,38 @@ func TestFlagExpiredPeers(t *testing.T) {
 		name        string
 		controlTime *time.Time
 		netmap      *netmap.NetworkMap
-		want        []tailcfg.NodeView
+		want        []*tailcfg.Node
 	}{
 		{
 			name:        "no_expiry",
 			controlTime: &now,
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInFuture),
 					n(2, "bar", timeInFuture),
-				}),
+				},
 			},
-			want: nodeViews([]*tailcfg.Node{
+			want: []*tailcfg.Node{
 				n(1, "foo", timeInFuture),
 				n(2, "bar", timeInFuture),
-			}),
+			},
 		},
 		{
 			name:        "expiry",
 			controlTime: &now,
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInFuture),
 					n(2, "bar", timeInPast),
-				}),
+				},
 			},
-			want: nodeViews([]*tailcfg.Node{
+			want: []*tailcfg.Node{
 				n(1, "foo", timeInFuture),
 				n(2, "bar", timeInPast, func(n *tailcfg.Node) {
 					n.Expired = true
 					n.Key = expiredKey
 				}),
-			}),
+			},
 		},
 		{
 			name: "bad_ControlTime",
@@ -83,29 +83,29 @@ func TestFlagExpiredPeers(t *testing.T) {
 			controlTime: &timeBeforeEpoch,
 
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInFuture),
 					n(2, "bar", timeBeforeEpoch.Add(-1*time.Hour)), // before ControlTime
-				}),
+				},
 			},
-			want: nodeViews([]*tailcfg.Node{
+			want: []*tailcfg.Node{
 				n(1, "foo", timeInFuture),
 				n(2, "bar", timeBeforeEpoch.Add(-1*time.Hour)), // should have expired, but ControlTime is before epoch
-			}),
+			},
 		},
 		{
 			name:        "tagged_node",
 			controlTime: &now,
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInFuture),
 					n(2, "bar", time.Time{}), // tagged node; zero expiry
-				}),
+				},
 			},
-			want: nodeViews([]*tailcfg.Node{
+			want: []*tailcfg.Node{
 				n(1, "foo", timeInFuture),
 				n(2, "bar", time.Time{}), // not expired
-			}),
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -147,92 +147,92 @@ func TestNextPeerExpiry(t *testing.T) {
 		{
 			name: "no_expiry",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", noExpiry),
 					n(2, "bar", noExpiry),
-				}),
-				SelfNode: n(3, "self", noExpiry).View(),
+				},
+				SelfNode: n(3, "self", noExpiry),
 			},
 			want: noExpiry,
 		},
 		{
 			name: "future_expiry_from_peer",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", noExpiry),
 					n(2, "bar", timeInFuture),
-				}),
-				SelfNode: n(3, "self", noExpiry).View(),
+				},
+				SelfNode: n(3, "self", noExpiry),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "future_expiry_from_self",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", noExpiry),
 					n(2, "bar", noExpiry),
-				}),
-				SelfNode: n(3, "self", timeInFuture).View(),
+				},
+				SelfNode: n(3, "self", timeInFuture),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "future_expiry_from_multiple_peers",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInFuture),
 					n(2, "bar", timeInMoreFuture),
-				}),
-				SelfNode: n(3, "self", noExpiry).View(),
+				},
+				SelfNode: n(3, "self", noExpiry),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "future_expiry_from_peer_and_self",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInMoreFuture),
-				}),
-				SelfNode: n(2, "self", timeInFuture).View(),
+				},
+				SelfNode: n(2, "self", timeInFuture),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "only_self",
 			netmap: &netmap.NetworkMap{
-				Peers:    nodeViews([]*tailcfg.Node{}),
-				SelfNode: n(1, "self", timeInFuture).View(),
+				Peers:    []*tailcfg.Node{},
+				SelfNode: n(1, "self", timeInFuture),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "peer_already_expired",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInPast),
-				}),
-				SelfNode: n(2, "self", timeInFuture).View(),
+				},
+				SelfNode: n(2, "self", timeInFuture),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "self_already_expired",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInFuture),
-				}),
-				SelfNode: n(2, "self", timeInPast).View(),
+				},
+				SelfNode: n(2, "self", timeInPast),
 			},
 			want: timeInFuture,
 		},
 		{
 			name: "all_nodes_already_expired",
 			netmap: &netmap.NetworkMap{
-				Peers: nodeViews([]*tailcfg.Node{
+				Peers: []*tailcfg.Node{
 					n(1, "foo", timeInPast),
-				}),
-				SelfNode: n(2, "self", timeInPast).View(),
+				},
+				SelfNode: n(2, "self", timeInPast),
 			},
 			want: noExpiry,
 		},
@@ -263,9 +263,9 @@ func TestNextPeerExpiry(t *testing.T) {
 		// If we don't adjust for the local time, this would return a
 		// time in the past.
 		nm := &netmap.NetworkMap{
-			Peers: nodeViews([]*tailcfg.Node{
+			Peers: []*tailcfg.Node{
 				n(1, "foo", timeInPast),
-			}),
+			},
 		}
 		got := em.nextPeerExpiry(nm, now)
 		want := now.Add(30 * time.Second)
@@ -275,24 +275,24 @@ func TestNextPeerExpiry(t *testing.T) {
 	})
 }
 
-func formatNodes(nodes []tailcfg.NodeView) string {
+func formatNodes(nodes []*tailcfg.Node) string {
 	var sb strings.Builder
 	for i, n := range nodes {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		fmt.Fprintf(&sb, "(%d, %q", n.ID(), n.Name())
+		fmt.Fprintf(&sb, "(%d, %q", n.ID, n.Name)
 
-		if n.Online() != nil {
-			fmt.Fprintf(&sb, ", online=%v", *n.Online())
+		if n.Online != nil {
+			fmt.Fprintf(&sb, ", online=%v", *n.Online)
 		}
-		if n.LastSeen() != nil {
-			fmt.Fprintf(&sb, ", lastSeen=%v", n.LastSeen().Unix())
+		if n.LastSeen != nil {
+			fmt.Fprintf(&sb, ", lastSeen=%v", n.LastSeen.Unix())
 		}
-		if n.Key() != (key.NodePublic{}) {
-			fmt.Fprintf(&sb, ", key=%v", n.Key().String())
+		if n.Key != (key.NodePublic{}) {
+			fmt.Fprintf(&sb, ", key=%v", n.Key.String())
 		}
-		if n.Expired() {
+		if n.Expired {
 			fmt.Fprintf(&sb, ", expired=true")
 		}
 		sb.WriteString(")")

@@ -6,7 +6,6 @@
 package ipn
 
 import (
-	"maps"
 	"net/netip"
 
 	"tailscale.com/tailcfg"
@@ -51,7 +50,6 @@ var _PrefsCloneNeedsRegeneration = Prefs(struct {
 	NetfilterMode          preftype.NetfilterMode
 	OperatorUser           string
 	ProfileName            string
-	AutoUpdate             AutoUpdatePrefs
 	Persist                *persist.Persist
 }{})
 
@@ -75,11 +73,10 @@ func (src *ServeConfig) Clone() *ServeConfig {
 			dst.Web[k] = v.Clone()
 		}
 	}
-	dst.AllowFunnel = maps.Clone(src.AllowFunnel)
-	if dst.Foreground != nil {
-		dst.Foreground = map[string]*ServeConfig{}
-		for k, v := range src.Foreground {
-			dst.Foreground[k] = v.Clone()
+	if dst.AllowFunnel != nil {
+		dst.AllowFunnel = map[HostPort]bool{}
+		for k, v := range src.AllowFunnel {
+			dst.AllowFunnel[k] = v
 		}
 	}
 	return dst
@@ -90,8 +87,6 @@ var _ServeConfigCloneNeedsRegeneration = ServeConfig(struct {
 	TCP         map[uint16]*TCPPortHandler
 	Web         map[HostPort]*WebServerConfig
 	AllowFunnel map[HostPort]bool
-	Foreground  map[string]*ServeConfig
-	ETag        string
 }{})
 
 // Clone makes a deep copy of TCPPortHandler.

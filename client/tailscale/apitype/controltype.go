@@ -4,13 +4,12 @@
 package apitype
 
 type DNSConfig struct {
-	Resolvers          []DNSResolver            `json:"resolvers"`
-	FallbackResolvers  []DNSResolver            `json:"fallbackResolvers"`
-	Routes             map[string][]DNSResolver `json:"routes"`
-	Domains            []string                 `json:"domains"`
-	Nameservers        []string                 `json:"nameservers"`
-	Proxied            bool                     `json:"proxied"`
-	TempCorpIssue13969 string                   `json:"TempCorpIssue13969,omitempty"`
+	Resolvers         []DNSResolver            `json:"resolvers"`
+	FallbackResolvers []DNSResolver            `json:"fallbackResolvers"`
+	Routes            map[string][]DNSResolver `json:"routes"`
+	Domains           []string                 `json:"domains"`
+	Nameservers       []string                 `json:"nameservers"`
+	Proxied           bool                     `json:"proxied"`
 }
 
 type DNSResolver struct {

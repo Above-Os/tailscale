@@ -127,14 +127,9 @@ func (k DiscoPublic) String() string {
 	return string(bs)
 }
 
-// AppendText implements encoding.TextAppender.
-func (k DiscoPublic) AppendText(b []byte) ([]byte, error) {
-	return appendHexKey(b, discoPublicHexPrefix, k.k[:]), nil
-}
-
 // MarshalText implements encoding.TextMarshaler.
 func (k DiscoPublic) MarshalText() ([]byte, error) {
-	return k.AppendText(nil)
+	return toHex(k.k[:], discoPublicHexPrefix), nil
 }
 
 // MarshalText implements encoding.TextUnmarshaler.

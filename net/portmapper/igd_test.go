@@ -14,9 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"tailscale.com/control/controlknobs"
 	"tailscale.com/net/netaddr"
-	"tailscale.com/syncs"
 	"tailscale.com/types/logger"
 )
 
@@ -26,7 +24,6 @@ type TestIGD struct {
 	upnpConn net.PacketConn // for UPnP discovery
 	pxpConn  net.PacketConn // for NAT-PMP and/or PCP
 	ts       *httptest.Server
-	upnpHTTP syncs.AtomicValue[http.Handler]
 	logf     logger.Logf
 	closed   atomic.Bool
 
@@ -128,17 +125,8 @@ func (d *TestIGD) stats() igdCounters {
 	return d.counters
 }
 
-func (d *TestIGD) SetUPnPHandler(h http.Handler) {
-	d.upnpHTTP.Store(h)
-}
-
 func (d *TestIGD) serveUPnPHTTP(w http.ResponseWriter, r *http.Request) {
-	if handler := d.upnpHTTP.Load(); handler != nil {
-		handler.ServeHTTP(w, r)
-		return
-	}
-
-	http.NotFound(w, r)
+	http.NotFound(w, r) // TODO
 }
 
 func (d *TestIGD) serveUPnPDiscovery() {
@@ -261,7 +249,7 @@ func (d *TestIGD) handlePCPQuery(pkt []byte, src netip.AddrPort) {
 
 func newTestClient(t *testing.T, igd *TestIGD) *Client {
 	var c *Client
-	c = NewClient(t.Logf, nil, nil, new(controlknobs.Knobs), func() {
+	c = NewClient(t.Logf, nil, nil, func() {
 		t.Logf("port map changed")
 		t.Logf("have mapping: %v", c.HaveMapping())
 	})

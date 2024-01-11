@@ -35,14 +35,14 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dsnet/try"
 	jsonv2 "github.com/go-json-experiment/json"
-	"github.com/go-json-experiment/json/jsontext"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 	"tailscale.com/types/logid"
 	"tailscale.com/types/netlogtype"
 	"tailscale.com/util/cmpx"
@@ -76,13 +76,13 @@ func main() {
 
 func processStream(r io.Reader) (err error) {
 	defer try.Handle(&err)
-	dec := jsontext.NewDecoder(os.Stdin)
+	dec := jsonv2.NewDecoder(os.Stdin)
 	for {
 		processValue(dec)
 	}
 }
 
-func processValue(dec *jsontext.Decoder) {
+func processValue(dec *jsonv2.Decoder) {
 	switch dec.PeekKind() {
 	case '[':
 		processArray(dec)
@@ -93,7 +93,7 @@ func processValue(dec *jsontext.Decoder) {
 	}
 }
 
-func processArray(dec *jsontext.Decoder) {
+func processArray(dec *jsonv2.Decoder) {
 	try.E1(dec.ReadToken()) // parse '['
 	for dec.PeekKind() != ']' {
 		processValue(dec)
@@ -101,7 +101,7 @@ func processArray(dec *jsontext.Decoder) {
 	try.E1(dec.ReadToken()) // parse ']'
 }
 
-func processObject(dec *jsontext.Decoder) {
+func processObject(dec *jsonv2.Decoder) {
 	var hasTraffic bool
 	var rawMsg []byte
 	try.E1(dec.ReadToken()) // parse '{'
@@ -315,8 +315,8 @@ func mustMakeNamesByAddr() map[netip.Addr]string {
 	namesByAddr := make(map[netip.Addr]string)
 retry:
 	for i := 0; i < 10; i++ {
-		clear(seen)
-		clear(namesByAddr)
+		maps.Clear(seen)
+		maps.Clear(namesByAddr)
 		for _, d := range m.Devices {
 			name := fieldPrefix(d.Name, i)
 			if seen[name] {

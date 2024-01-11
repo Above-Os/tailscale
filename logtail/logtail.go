@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"tailscale.com/envknob"
+	"tailscale.com/net/interfaces"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/sockstats"
 	"tailscale.com/tstime"
@@ -426,8 +427,8 @@ func (l *Logger) internetUp() bool {
 
 func (l *Logger) awaitInternetUp(ctx context.Context) {
 	upc := make(chan bool, 1)
-	defer l.netMonitor.RegisterChangeCallback(func(delta *netmon.ChangeDelta) {
-		if delta.New.AnyInterfaceUp() {
+	defer l.netMonitor.RegisterChangeCallback(func(changed bool, st *interfaces.State) {
+		if st.AnyInterfaceUp() {
 			select {
 			case upc <- true:
 			default:

@@ -55,7 +55,7 @@ func TestGetInterfaceIndex(t *testing.T) {
 	}
 
 	t.Run("NoTailscale", func(t *testing.T) {
-		tsif, err := tailscaleInterface()
+		_, tsif, err := interfaces.Tailscale()
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -25,7 +25,6 @@ var (
 	dnsCache            syncs.AtomicValue[dnsEntryMap]
 	dnsCacheBytes       syncs.AtomicValue[[]byte] // of JSON
 	unpublishedDNSCache syncs.AtomicValue[dnsEntryMap]
-	bootstrapLookupMap  syncs.Map[string, bool]
 )
 
 var (
@@ -35,12 +34,6 @@ var (
 	unpublishedDNSHits   = expvar.NewInt("counter_bootstrap_dns_unpublished_hits")
 	unpublishedDNSMisses = expvar.NewInt("counter_bootstrap_dns_unpublished_misses")
 )
-
-func init() {
-	expvar.Publish("counter_bootstrap_dns_queried_domains", expvar.Func(func() any {
-		return bootstrapLookupMap.Len()
-	}))
-}
 
 func refreshBootstrapDNSLoop() {
 	if *bootstrapDNS == "" && *unpublishedDNS == "" {
@@ -114,7 +107,6 @@ func handleBootstrapDNS(w http.ResponseWriter, r *http.Request) {
 
 	// Try answering a query from our hidden map first
 	if q := r.URL.Query().Get("q"); q != "" {
-		bootstrapLookupMap.Store(q, true)
 		if ips, ok := unpublishedDNSCache.Load()[q]; ok && len(ips) > 0 {
 			unpublishedDNSHits.Add(1)
 

@@ -1,8 +1,6 @@
 // Copyright (c) Tailscale Inc & AUTHORS
 // SPDX-License-Identifier: BSD-3-Clause
 
-//go:build !plan9
-
 // The sync-containers command synchronizes container image tags from one
 // registry to another.
 //

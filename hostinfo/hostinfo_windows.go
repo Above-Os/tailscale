@@ -62,8 +62,7 @@ func packageTypeWindows() string {
 	if _, err := os.Stat(`C:\ProgramData\chocolatey\lib\tailscale`); err == nil {
 		return "choco"
 	}
-	msiSentinel, _ := winutil.GetRegInteger("MSI")
-	if msiSentinel == 1 {
+	if msiSentinel := winutil.GetRegInteger("MSI", 0); msiSentinel == 1 {
 		return "msi"
 	}
 	exe, err := os.Executable()

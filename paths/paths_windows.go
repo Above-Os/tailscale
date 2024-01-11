@@ -12,11 +12,7 @@ import (
 	"tailscale.com/util/winutil"
 )
 
-func init() {
-	ensureStateDirPerms = ensureStateDirPermsWindows
-}
-
-// ensureStateDirPermsWindows applies a restrictive ACL to the directory specified by dirPath.
+// ensureStateDirPerms applies a restrictive ACL to the directory specified by dirPath.
 // It sets the following security attributes on the directory:
 // Owner: The user for the current process;
 // Primary Group: The primary group for the current process;
@@ -30,7 +26,7 @@ func init() {
 //
 //	However, any directories and/or files created within this
 //	directory *do* inherit the ACL that we are setting.
-func ensureStateDirPermsWindows(dirPath string) error {
+func ensureStateDirPerms(dirPath string) error {
 	fi, err := os.Stat(dirPath)
 	if err != nil {
 		return err
@@ -97,4 +93,10 @@ func ensureStateDirPermsWindows(dirPath string) error {
 		windows.PROTECTED_DACL_SECURITY_INFORMATION
 	return windows.SetNamedSecurityInfo(dirPath, windows.SE_FILE_OBJECT, flags,
 		sids.User, sids.PrimaryGroup, dacl, nil)
+}
+
+// LegacyStateFilePath returns the legacy path to the state file when it was stored under the
+// current user's %LocalAppData%.
+func LegacyStateFilePath() string {
+	return filepath.Join(os.Getenv("LocalAppData"), "Tailscale", "server-state.conf")
 }

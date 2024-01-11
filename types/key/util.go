@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 
 	"go4.org/mem"
 )
@@ -50,19 +49,11 @@ func clamp25519Private(b []byte) {
 	b[31] = (b[31] & 127) | 64
 }
 
-func appendHexKey(dst []byte, prefix string, key []byte) []byte {
-	dst = slices.Grow(dst, len(prefix)+hex.EncodedLen(len(key)))
-	dst = append(dst, prefix...)
-	dst = hexAppendEncode(dst, key)
-	return dst
-}
-
-// TODO(https://go.dev/issue/53693): Use hex.AppendEncode instead.
-func hexAppendEncode(dst, src []byte) []byte {
-	n := hex.EncodedLen(len(src))
-	dst = slices.Grow(dst, n)
-	hex.Encode(dst[len(dst):][:n], src)
-	return dst[:len(dst)+n]
+func toHex(k []byte, prefix string) []byte {
+	ret := make([]byte, len(prefix)+len(k)*2)
+	copy(ret, prefix)
+	hex.Encode(ret[len(prefix):], k)
+	return ret
 }
 
 // parseHex decodes a key string of the form "<prefix><hex string>"

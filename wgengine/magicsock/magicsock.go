@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -24,8 +25,6 @@ import (
 	"go4.org/mem"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
-
-	"tailscale.com/control/controlknobs"
 	"tailscale.com/disco"
 	"tailscale.com/envknob"
 	"tailscale.com/health"
@@ -51,13 +50,11 @@ import (
 	"tailscale.com/types/logger"
 	"tailscale.com/types/netmap"
 	"tailscale.com/types/nettype"
-	"tailscale.com/types/views"
 	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/ringbuffer"
-	"tailscale.com/util/set"
-	"tailscale.com/util/testenv"
 	"tailscale.com/util/uniq"
+	"tailscale.com/version"
 	"tailscale.com/wgengine/capture"
 )
 
@@ -88,7 +85,6 @@ type Conn struct {
 	testOnlyPacketListener nettype.PacketListener
 	noteRecvActivity       func(key.NodePublic) // or nil, see Options.NoteRecvActivity
 	netMon                 *netmon.Monitor      // or nil
-	controlKnobs           *controlknobs.Knobs  // or nil
 
 	// ================================================================
 	// No locking required to access these fields, either because
@@ -165,9 +161,6 @@ type Conn struct {
 	// port is the preferred port from opts.Port; 0 means auto.
 	port atomic.Uint32
 
-	// peerMTUEnabled is whether path MTU discovery to peers is enabled.
-	peerMTUEnabled atomic.Bool
-
 	// stats maintains per-connection counters.
 	stats atomic.Pointer[connstats.Statistics]
 
@@ -236,10 +229,10 @@ type Conn struct {
 	// WireGuard. These are not used to filter inbound or outbound
 	// traffic at all, but only to track what state can be cleaned up
 	// in other maps below that are keyed by peer public key.
-	peerSet set.Set[key.NodePublic]
+	peerSet map[key.NodePublic]struct{}
 
-	// peerMap tracks the networkmap Node entity for each peer
-	// by node key, node ID, and discovery key.
+	// nodeOfDisco tracks the networkmap Node entity for each peer
+	// discovery key.
 	peerMap peerMap
 
 	// discoInfo is the state for an active DiscoKey.
@@ -260,16 +253,14 @@ type Conn struct {
 	// magicsock could do with any complexity reduction it can get.
 	netInfoLast *tailcfg.NetInfo
 
-	derpMap          *tailcfg.DERPMap              // nil (or zero regions/nodes) means DERP is disabled
-	peers            views.Slice[tailcfg.NodeView] // from last SetNetworkMap update
-	lastFlags        debugFlags                    // at time of last SetNetworkMap
-	firstAddrForTest netip.Addr                    // from last SetNetworkMap update; for tests only
-	privateKey       key.NodePrivate               // WireGuard private key for this node
-	everHadKey       bool                          // whether we ever had a non-zero private key
-	myDerp           int                           // nearest DERP region ID; 0 means none/unknown
-	derpStarted      chan struct{}                 // closed on first connection to DERP; for tests & cleaner Close
-	activeDerp       map[int]activeDerp            // DERP regionID -> connection to a node in that region
-	prevDerp         map[int]*syncs.WaitGroupChan
+	derpMap     *tailcfg.DERPMap // nil (or zero regions/nodes) means DERP is disabled
+	netMap      *netmap.NetworkMap
+	privateKey  key.NodePrivate    // WireGuard private key for this node
+	everHadKey  bool               // whether we ever had a non-zero private key
+	myDerp      int                // nearest DERP region ID; 0 means none/unknown
+	derpStarted chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
+	activeDerp  map[int]activeDerp // DERP regionID -> connection to a node in that region
+	prevDerp    map[int]*syncs.WaitGroupChan
 
 	// derpRoute contains optional alternate routes to use as an
 	// optimization instead of contacting a peer via their home
@@ -347,10 +338,6 @@ type Options struct {
 	// NetMon is the network monitor to use.
 	// With one, the portmapper won't be used.
 	NetMon *netmon.Monitor
-
-	// ControlKnobs are the set of control knobs to use.
-	// If nil, they're ignored and not updated.
-	ControlKnobs *controlknobs.Knobs
 }
 
 func (o *Options) logf() logger.Logf {
@@ -411,14 +398,13 @@ func newConn() *Conn {
 func NewConn(opts Options) (*Conn, error) {
 	c := newConn()
 	c.port.Store(uint32(opts.Port))
-	c.controlKnobs = opts.ControlKnobs
 	c.logf = opts.logf()
 	c.epFunc = opts.endpointsFunc()
 	c.derpActiveFunc = opts.derpActiveFunc()
 	c.idleFunc = opts.IdleFunc
 	c.testOnlyPacketListener = opts.TestOnlyPacketListener
 	c.noteRecvActivity = opts.NoteRecvActivity
-	c.portMapper = portmapper.NewClient(logger.WithPrefix(c.logf, "portmapper: "), opts.NetMon, nil, opts.ControlKnobs, c.onPortMapChanged)
+	c.portMapper = portmapper.NewClient(logger.WithPrefix(c.logf, "portmapper: "), opts.NetMon, nil, c.onPortMapChanged)
 	if opts.NetMon != nil {
 		c.portMapper.SetGatewayLookupFunc(opts.NetMon.GatewayAndSelfIP)
 	}
@@ -660,7 +646,7 @@ func (c *Conn) updateNetInfo(ctx context.Context) (*netcheck.Report, error) {
 	return report, nil
 }
 
-// callNetInfoCallback calls the callback (if previously
+// callNetInfoCallback calls the NetInfo callback (if previously
 // registered with SetNetInfoCallback) if ni has substantially changed
 // since the last state.
 //
@@ -694,13 +680,6 @@ func (c *Conn) addValidDiscoPathForTest(nodeKey key.NodePublic, addr netip.AddrP
 	c.peerMap.setNodeKeyForIPPort(addr, nodeKey)
 }
 
-// SetNetInfoCallback sets the func to be called whenever the network conditions
-// change.
-//
-// At most one func can be registered; the most recent one replaces any previous
-// registration.
-//
-// This is called by LocalBackend.
 func (c *Conn) SetNetInfoCallback(fn func(*tailcfg.NetInfo)) {
 	if fn == nil {
 		panic("nil NetInfoCallback")
@@ -732,7 +711,7 @@ func (c *Conn) LastRecvActivityOfNodeKey(nk key.NodePublic) string {
 }
 
 // Ping handles a "tailscale ping" CLI query.
-func (c *Conn) Ping(peer tailcfg.NodeView, res *ipnstate.PingResult, size int, cb func(*ipnstate.PingResult)) {
+func (c *Conn) Ping(peer *tailcfg.Node, res *ipnstate.PingResult, size int, cb func(*ipnstate.PingResult)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.privateKey.IsZero() {
@@ -740,17 +719,17 @@ func (c *Conn) Ping(peer tailcfg.NodeView, res *ipnstate.PingResult, size int, c
 		cb(res)
 		return
 	}
-	if peer.Addresses().Len() > 0 {
-		res.NodeIP = peer.Addresses().At(0).Addr().String()
+	if len(peer.Addresses) > 0 {
+		res.NodeIP = peer.Addresses[0].Addr().String()
 	}
-	res.NodeName = peer.Name() // prefer DNS name
+	res.NodeName = peer.Name // prefer DNS name
 	if res.NodeName == "" {
-		res.NodeName = peer.Hostinfo().Hostname() // else hostname
+		res.NodeName = peer.Hostinfo.Hostname() // else hostname
 	} else {
 		res.NodeName, _, _ = strings.Cut(res.NodeName, ".")
 	}
 
-	ep, ok := c.peerMap.endpointForNodeKey(peer.Key())
+	ep, ok := c.peerMap.endpointForNodeKey(peer.Key)
 	if !ok {
 		res.Err = "unknown peer"
 		cb(res)
@@ -774,13 +753,13 @@ func (c *Conn) populateCLIPingResponseLocked(res *ipnstate.PingResult, latency t
 // GetEndpointChanges returns the most recent changes for a particular
 // endpoint. The returned EndpointChange structs are for debug use only and
 // there are no guarantees about order, size, or content.
-func (c *Conn) GetEndpointChanges(peer tailcfg.NodeView) ([]EndpointChange, error) {
+func (c *Conn) GetEndpointChanges(peer *tailcfg.Node) ([]EndpointChange, error) {
 	c.mu.Lock()
 	if c.privateKey.IsZero() {
 		c.mu.Unlock()
 		return nil, fmt.Errorf("tailscaled stopped")
 	}
-	ep, ok := c.peerMap.endpointForNodeKey(peer.Key())
+	ep, ok := c.peerMap.endpointForNodeKey(peer.Key)
 	c.mu.Unlock()
 
 	if !ok {
@@ -985,8 +964,6 @@ var errConnClosed = errors.New("Conn closed")
 var errDropDerpPacket = errors.New("too many DERP packets queued; dropping")
 
 var errNoUDP = errors.New("no UDP available on platform")
-
-var errUnsupportedConnType = errors.New("unsupported connection type")
 
 var (
 	// This acts as a compile-time check for our usage of ipv6.Message in
@@ -1211,7 +1188,7 @@ func (c *Conn) receiveIP(b []byte, ipp netip.AddrPort, cache *ippEndpointCache) 
 		cache.gen = de.numStopAndReset()
 		ep = de
 	}
-	ep.noteRecvActivity(ipp)
+	ep.noteRecvActivity()
 	if stats := c.stats.Load(); stats != nil {
 		stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b))
 	}
@@ -1293,7 +1270,7 @@ func (c *Conn) sendDiscoMessage(dst netip.AddrPort, dstKey key.NodePublic, dstDi
 		// Can't send. (e.g. no IPv6 locally)
 	} else {
 		if !c.networkDown() {
-			c.logf("magicsock: disco: failed to send %v to %v: %v", disco.MessageSummary(m), dst, err)
+			c.logf("magicsock: disco: failed to send %T to %v: %v", m, dst, err)
 		}
 	}
 	return sent, err
@@ -1668,7 +1645,7 @@ func (c *Conn) SetPreferredPort(port uint16) {
 	c.port.Store(uint32(port))
 
 	if err := c.rebind(dropCurrentPort); err != nil {
-		c.logf("%v", err)
+		c.logf("%w", err)
 		return
 	}
 	c.resetEndpointStates()
@@ -1731,7 +1708,7 @@ func (c *Conn) SetPrivateKey(privateKey key.NodePrivate) error {
 // then removes any state for old peers.
 //
 // The caller passes ownership of newPeers map to UpdatePeers.
-func (c *Conn) UpdatePeers(newPeers set.Set[key.NodePublic]) {
+func (c *Conn) UpdatePeers(newPeers map[key.NodePublic]struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1741,7 +1718,7 @@ func (c *Conn) UpdatePeers(newPeers set.Set[key.NodePublic]) {
 	// Clean up any key.NodePublic-keyed maps for peers that no longer
 	// exist.
 	for peer := range oldPeers {
-		if !newPeers.Contains(peer) {
+		if _, ok := newPeers[peer]; !ok {
 			delete(c.derpRoute, peer)
 			delete(c.peerLastDerp, peer)
 		}
@@ -1752,52 +1729,16 @@ func (c *Conn) UpdatePeers(newPeers set.Set[key.NodePublic]) {
 	}
 }
 
-func nodesEqual(x, y views.Slice[tailcfg.NodeView]) bool {
-	if x.Len() != y.Len() {
+func nodesEqual(x, y []*tailcfg.Node) bool {
+	if len(x) != len(y) {
 		return false
 	}
-	for i := range x.LenIter() {
-		if !x.At(i).Equal(y.At(i)) {
+	for i := range x {
+		if !x[i].Equal(y[i]) {
 			return false
 		}
 	}
 	return true
-}
-
-// debugRingBufferSize returns a maximum size for our set of endpoint ring
-// buffers by assuming that a single large update is ~500 bytes, and that we
-// want to not use more than 1MiB of memory on phones / 4MiB on other devices.
-// Calculate the per-endpoint ring buffer size by dividing that out, but always
-// storing at least two entries.
-func debugRingBufferSize(numPeers int) int {
-	const defaultVal = 2
-	if numPeers == 0 {
-		return defaultVal
-	}
-	var maxRingBufferSize int
-	if runtime.GOOS == "ios" || runtime.GOOS == "android" {
-		maxRingBufferSize = 1 * 1024 * 1024
-	} else {
-		maxRingBufferSize = 4 * 1024 * 1024
-	}
-	if v := debugRingBufferMaxSizeBytes(); v > 0 {
-		maxRingBufferSize = v
-	}
-
-	const averageRingBufferElemSize = 512
-	return max(defaultVal, maxRingBufferSize/(averageRingBufferElemSize*numPeers))
-}
-
-// debugFlags are the debug flags in use by the magicsock package.
-// They might be set by envknob and/or controlknob.
-// The value is comparable.
-type debugFlags struct {
-	heartbeatDisabled bool
-}
-
-func (c *Conn) debugFlagsLocked() (f debugFlags) {
-	f.heartbeatDisabled = debugEnableSilentDisco() // TODO(bradfitz): controlknobs too, later
-	return
 }
 
 // SetNetworkMap is called when the control client gets a new network
@@ -1813,32 +1754,50 @@ func (c *Conn) SetNetworkMap(nm *netmap.NetworkMap) {
 		return
 	}
 
-	priorPeers := c.peers
+	priorNetmap := c.netMap
+	var priorDebug *tailcfg.Debug
+	if priorNetmap != nil {
+		priorDebug = priorNetmap.Debug
+	}
+	debugChanged := !reflect.DeepEqual(priorDebug, nm.Debug)
 	metricNumPeers.Set(int64(len(nm.Peers)))
 
 	// Update c.netMap regardless, before the following early return.
-	curPeers := views.SliceOf(nm.Peers)
-	c.peers = curPeers
+	c.netMap = nm
 
-	flags := c.debugFlagsLocked()
-	if addrs := nm.GetAddresses(); addrs.Len() > 0 {
-		c.firstAddrForTest = addrs.At(0).Addr()
-	} else {
-		c.firstAddrForTest = netip.Addr{}
-	}
-
-	if nodesEqual(priorPeers, curPeers) && c.lastFlags == flags {
+	if priorNetmap != nil && nodesEqual(priorNetmap.Peers, nm.Peers) && !debugChanged {
 		// The rest of this function is all adjusting state for peers that have
 		// changed. But if the set of peers is equal and the debug flags (for
 		// silent disco) haven't changed, no need to do anything else.
 		return
 	}
 
-	c.lastFlags = flags
-
 	c.logf("[v1] magicsock: got updated network map; %d peers", len(nm.Peers))
+	heartbeatDisabled := debugEnableSilentDisco() || (c.netMap != nil && c.netMap.Debug != nil && c.netMap.Debug.EnableSilentDisco)
 
-	entriesPerBuffer := debugRingBufferSize(len(nm.Peers))
+	// Set a maximum size for our set of endpoint ring buffers by assuming
+	// that a single large update is ~500 bytes, and that we want to not
+	// use more than 1MiB of memory on phones / 4MiB on other devices.
+	// Calculate the per-endpoint ring buffer size by dividing that out,
+	// but always storing at least two entries.
+	var entriesPerBuffer int = 2
+	if len(nm.Peers) > 0 {
+		var maxRingBufferSize int
+		if runtime.GOOS == "ios" || runtime.GOOS == "android" {
+			maxRingBufferSize = 1 * 1024 * 1024
+		} else {
+			maxRingBufferSize = 4 * 1024 * 1024
+		}
+		if v := debugRingBufferMaxSizeBytes(); v > 0 {
+			maxRingBufferSize = v
+		}
+
+		const averageRingBufferElemSize = 512
+		entriesPerBuffer = maxRingBufferSize / (averageRingBufferElemSize * len(nm.Peers))
+		if entriesPerBuffer < 2 {
+			entriesPerBuffer = 2
+		}
+	}
 
 	// Try a pass of just upserting nodes and creating missing
 	// endpoints. If the set of nodes is the same, this is an
@@ -1846,27 +1805,8 @@ func (c *Conn) SetNetworkMap(nm *netmap.NetworkMap) {
 	// we'll fall through to the next pass, which allocates but can
 	// handle full set updates.
 	for _, n := range nm.Peers {
-		if n.ID() == 0 {
-			devPanicf("node with zero ID")
-			continue
-		}
-		if n.Key().IsZero() {
-			devPanicf("node with zero key")
-			continue
-		}
-		ep, ok := c.peerMap.endpointForNodeID(n.ID())
-		if ok && ep.publicKey != n.Key() {
-			// The node rotated public keys. Delete the old endpoint and create
-			// it anew.
-			c.peerMap.deleteEndpoint(ep)
-			ok = false
-		}
-		if ok {
-			// At this point we're modifying an existing endpoint (ep) whose
-			// public key and nodeID match n. Its other fields (such as disco
-			// key or endpoints) might've changed.
-
-			if n.DiscoKey().IsZero() && !n.IsWireGuardOnly() {
+		if ep, ok := c.peerMap.endpointForNodeKey(n.Key); ok {
+			if n.DiscoKey.IsZero() && !n.IsWireGuardOnly {
 				// Discokey transitioned from non-zero to zero? This should not
 				// happen in the wild, however it could mean:
 				// 1. A node was downgraded from post 0.100 to pre 0.100.
@@ -1881,60 +1821,64 @@ func (c *Conn) SetNetworkMap(nm *netmap.NetworkMap) {
 			if epDisco := ep.disco.Load(); epDisco != nil {
 				oldDiscoKey = epDisco.key
 			}
-			ep.updateFromNode(n, flags.heartbeatDisabled)
+			ep.updateFromNode(n, heartbeatDisabled)
 			c.peerMap.upsertEndpoint(ep, oldDiscoKey) // maybe update discokey mappings in peerMap
 			continue
 		}
-
-		if ep, ok := c.peerMap.endpointForNodeKey(n.Key()); ok {
-			// At this point n.Key() should be for a key we've never seen before. If
-			// ok was true above, it was an update to an existing matching key and
-			// we don't get this far. If ok was false above, that means it's a key
-			// that differs from the one the NodeID had. But double check.
-			if ep.nodeID != n.ID() {
-				// Server error.
-				devPanicf("public key moved between nodeIDs (old=%v new=%v, key=%s)", ep.nodeID, n.ID(), n.Key().String())
-			} else {
-				// Internal data structures out of sync.
-				devPanicf("public key found in peerMap but not by nodeID")
-			}
-			continue
-		}
-		if n.DiscoKey().IsZero() && !n.IsWireGuardOnly() {
-			// Ancient pre-0.100 node, which does not have a disco key.
-			// No longer supported.
+		if n.DiscoKey.IsZero() && !n.IsWireGuardOnly {
+			// Ancient pre-0.100 node, which does not have a disco key, and will only be reachable via DERP.
 			continue
 		}
 
-		ep = &endpoint{
+		ep := &endpoint{
 			c:                 c,
 			debugUpdates:      ringbuffer.New[EndpointChange](entriesPerBuffer),
-			nodeID:            n.ID(),
-			publicKey:         n.Key(),
-			publicKeyHex:      n.Key().UntypedHexString(),
+			publicKey:         n.Key,
+			publicKeyHex:      n.Key.UntypedHexString(),
 			sentPing:          map[stun.TxID]sentPing{},
 			endpointState:     map[netip.AddrPort]*endpointState{},
-			heartbeatDisabled: flags.heartbeatDisabled,
-			isWireguardOnly:   n.IsWireGuardOnly(),
+			heartbeatDisabled: heartbeatDisabled,
+			isWireguardOnly:   n.IsWireGuardOnly,
 		}
-		if n.Addresses().Len() > 0 {
-			ep.nodeAddr = n.Addresses().At(0).Addr()
+		if len(n.Addresses) > 0 {
+			ep.nodeAddr = n.Addresses[0].Addr()
 		}
 		ep.initFakeUDPAddr()
-		if n.DiscoKey().IsZero() {
+		if n.DiscoKey.IsZero() {
 			ep.disco.Store(nil)
 		} else {
 			ep.disco.Store(&endpointDisco{
-				key:   n.DiscoKey(),
-				short: n.DiscoKey().ShortString(),
+				key:   n.DiscoKey,
+				short: n.DiscoKey.ShortString(),
 			})
-		}
 
-		if debugPeerMap() {
-			c.logEndpointCreated(n)
-		}
+			if debugDisco() { // rather than making a new knob
+				c.logf("magicsock: created endpoint key=%s: disco=%s; %v", n.Key.ShortString(), n.DiscoKey.ShortString(), logger.ArgWriter(func(w *bufio.Writer) {
+					const derpPrefix = "127.3.3.40:"
+					if strings.HasPrefix(n.DERP, derpPrefix) {
+						ipp, _ := netip.ParseAddrPort(n.DERP)
+						regionID := int(ipp.Port())
+						code := c.derpRegionCodeLocked(regionID)
+						if code != "" {
+							code = "(" + code + ")"
+						}
+						fmt.Fprintf(w, "derp=%v%s ", regionID, code)
+					}
 
-		ep.updateFromNode(n, flags.heartbeatDisabled)
+					for _, a := range n.AllowedIPs {
+						if a.IsSingleIP() {
+							fmt.Fprintf(w, "aip=%v ", a.Addr())
+						} else {
+							fmt.Fprintf(w, "aip=%v ", a)
+						}
+					}
+					for _, ep := range n.Endpoints {
+						fmt.Fprintf(w, "ep=%v ", ep)
+					}
+				}))
+			}
+		}
+		ep.updateFromNode(n, heartbeatDisabled)
 		c.peerMap.upsertEndpoint(ep, key.DiscoPublic{})
 	}
 
@@ -1944,12 +1888,12 @@ func (c *Conn) SetNetworkMap(nm *netmap.NetworkMap) {
 	// current netmap. If that happens, go through the allocful
 	// deletion path to clean up moribund nodes.
 	if c.peerMap.nodeCount() != len(nm.Peers) {
-		keep := set.Set[key.NodePublic]{}
+		keep := make(map[key.NodePublic]bool, len(nm.Peers))
 		for _, n := range nm.Peers {
-			keep.Add(n.Key())
+			keep[n.Key] = true
 		}
 		c.peerMap.forEachEndpoint(func(ep *endpoint) {
-			if !keep.Contains(ep.publicKey) {
+			if !keep[ep.publicKey] {
 				c.peerMap.deleteEndpoint(ep)
 			}
 		})
@@ -1961,40 +1905,6 @@ func (c *Conn) SetNetworkMap(nm *netmap.NetworkMap) {
 			delete(c.discoInfo, dk)
 		}
 	}
-}
-
-func devPanicf(format string, a ...any) {
-	if testenv.InTest() || envknob.CrashOnUnexpected() {
-		panic(fmt.Sprintf(format, a...))
-	}
-}
-
-func (c *Conn) logEndpointCreated(n tailcfg.NodeView) {
-	c.logf("magicsock: created endpoint key=%s: disco=%s; %v", n.Key().ShortString(), n.DiscoKey().ShortString(), logger.ArgWriter(func(w *bufio.Writer) {
-		const derpPrefix = "127.3.3.40:"
-		if strings.HasPrefix(n.DERP(), derpPrefix) {
-			ipp, _ := netip.ParseAddrPort(n.DERP())
-			regionID := int(ipp.Port())
-			code := c.derpRegionCodeLocked(regionID)
-			if code != "" {
-				code = "(" + code + ")"
-			}
-			fmt.Fprintf(w, "derp=%v%s ", regionID, code)
-		}
-
-		for i := range n.AllowedIPs().LenIter() {
-			a := n.AllowedIPs().At(i)
-			if a.IsSingleIP() {
-				fmt.Fprintf(w, "aip=%v ", a.Addr())
-			} else {
-				fmt.Fprintf(w, "aip=%v ", a)
-			}
-		}
-		for i := range n.Endpoints().LenIter() {
-			ep := n.Endpoints().At(i)
-			fmt.Fprintf(w, "ep=%v ", ep)
-		}
-	}))
 }
 
 func (c *Conn) logEndpointChange(endpoints []tailcfg.Endpoint) {
@@ -2186,7 +2096,7 @@ func (c *Conn) shouldDoPeriodicReSTUNLocked() bool {
 			c.logf("magicsock: periodicReSTUN: idle for %v", idleFor.Round(time.Second))
 		}
 		if idleFor > sessionActiveTimeout {
-			if c.controlKnobs != nil && c.controlKnobs.ForceBackgroundSTUN.Load() {
+			if c.netMap != nil && c.netMap.Debug != nil && c.netMap.Debug.ForceBackgroundSTUN {
 				// Overridden by control.
 				return true
 			}
@@ -2313,6 +2223,15 @@ func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate cur
 		}
 		trySetSocketBuffer(pconn, c.logf)
 
+		if CanPMTUD() {
+			err = setDontFragment(pconn, network)
+			if err != nil {
+				c.logf("magicsock: set dontfragment failed for %v port %d: %v", network, port, err)
+				// TODO disable PMTUD in this case. We don't expect the setsockopt to fail on
+				// supported platforms, but we might as well be paranoid.
+			}
+		}
+
 		// Success.
 		if debugBindSocket() {
 			c.logf("magicsock: bindSocket: successfully listened %v port %d", network, port)
@@ -2352,7 +2271,6 @@ func (c *Conn) rebind(curPortFate currentPortFate) error {
 		return fmt.Errorf("magicsock: Rebind IPv4 failed: %w", err)
 	}
 	c.portMapper.SetLocalPort(c.LocalPort())
-	c.UpdatePMTUD()
 	return nil
 }
 
@@ -2361,7 +2279,7 @@ func (c *Conn) rebind(curPortFate currentPortFate) error {
 func (c *Conn) Rebind() {
 	metricRebindCalls.Add(1)
 	if err := c.rebind(keepCurrentPort); err != nil {
-		c.logf("%v", err)
+		c.logf("%w", err)
 		return
 	}
 
@@ -2592,61 +2510,54 @@ func simpleDur(d time.Duration) time.Duration {
 	return d.Round(time.Minute)
 }
 
-// UpdateNetmapDelta implements controlclient.NetmapDeltaUpdater.
-func (c *Conn) UpdateNetmapDelta(muts []netmap.NodeMutation) (handled bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, m := range muts {
-		nodeID := m.NodeIDBeingMutated()
-		ep, ok := c.peerMap.endpointForNodeID(nodeID)
-		if !ok {
-			continue
-		}
-		switch m := m.(type) {
-		case netmap.NodeMutationDERPHome:
-			ep.setDERPHome(uint16(m.DERPRegion))
-		case netmap.NodeMutationEndpoints:
-			ep.mu.Lock()
-			ep.setEndpointsLocked(views.SliceOf(m.Endpoints))
-			ep.mu.Unlock()
-		}
-	}
-	return true
-}
-
-// UpdateStatus implements the interface nede by ipnstate.StatusBuilder.
-//
-// This method adds in the magicsock-specific information only. Most
-// of the status is otherwise populated by LocalBackend.
 func (c *Conn) UpdateStatus(sb *ipnstate.StatusBuilder) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	var tailscaleIPs []netip.Addr
+	if c.netMap != nil {
+		tailscaleIPs = make([]netip.Addr, 0, len(c.netMap.Addresses))
+		for _, addr := range c.netMap.Addresses {
+			if !addr.IsSingleIP() {
+				continue
+			}
+			sb.AddTailscaleIP(addr.Addr())
+			tailscaleIPs = append(tailscaleIPs, addr.Addr())
+		}
+	}
+
 	sb.MutateSelfStatus(func(ss *ipnstate.PeerStatus) {
+		if !c.privateKey.IsZero() {
+			ss.PublicKey = c.privateKey.Public()
+		} else {
+			ss.PublicKey = key.NodePublic{}
+		}
 		ss.Addrs = make([]string, 0, len(c.lastEndpoints))
 		for _, ep := range c.lastEndpoints {
 			ss.Addrs = append(ss.Addrs, ep.Addr.String())
 		}
+		ss.OS = version.OS()
 		if c.derpMap != nil {
-			if reg, ok := c.derpMap.Regions[c.myDerp]; ok {
-				ss.Relay = reg.RegionCode
+			derpRegion, ok := c.derpMap.Regions[c.myDerp]
+			if ok {
+				ss.Relay = derpRegion.RegionCode
 			}
 		}
+		ss.TailscaleIPs = tailscaleIPs
 	})
 
 	if sb.WantPeers {
 		c.peerMap.forEachEndpoint(func(ep *endpoint) {
 			ps := &ipnstate.PeerStatus{InMagicSock: true}
+			//ps.Addrs = append(ps.Addrs, n.Endpoints...)
 			ep.populatePeerStatus(ps)
 			sb.AddPeer(ep.publicKey, ps)
 		})
 	}
 
 	c.foreachActiveDerpSortedLocked(func(node int, ad activeDerp) {
-		// TODO(bradfitz): add a method to ipnstate.StatusBuilder
-		// to include all the DERP connections we have open
-		// and add it here. See the other caller of foreachActiveDerpSortedLocked.
+		// TODO(bradfitz): add to ipnstate.StatusBuilder
+		//f("<li><b>derp-%v</b>: cr%v,wr%v</li>", node, simpleDur(now.Sub(ad.createTime)), simpleDur(now.Sub(*ad.lastWrite)))
 	})
 }
 
@@ -2696,11 +2607,6 @@ var (
 	// resetting the counter, as the first pings likely didn't through
 	// the firewall)
 	discoPingInterval = 5 * time.Second
-
-	// wireguardPingInterval is the minimum time between pings to an endpoint.
-	// Pings are only sent if we have not observed bidirectional traffic with an
-	// endpoint in at least this duration.
-	wireguardPingInterval = 5 * time.Second
 )
 
 // indexSentinelDeleted is the temporary value that endpointState.index takes while
@@ -2713,33 +2619,6 @@ func (c *Conn) getPinger() *ping.Pinger {
 	return c.wgPinger.Get(func() *ping.Pinger {
 		return ping.New(c.connCtx, c.dlogf, netns.Listener(c.logf, c.netMon))
 	})
-}
-
-// DebugPickNewDERP picks a new DERP random home temporarily (even if just for
-// seconds) and reports it to control. It exists to test DERP home changes and
-// netmap deltas, etc. It serves no useful user purpose.
-func (c *Conn) DebugPickNewDERP() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	dm := c.derpMap
-	if dm == nil {
-		return errors.New("no derpmap")
-	}
-	if c.netInfoLast == nil {
-		return errors.New("no netinfo")
-	}
-	for _, r := range dm.Regions {
-		if r.RegionID == c.myDerp {
-			continue
-		}
-		c.logf("magicsock: [debug] switching derp home to random %v (%v)", r.RegionID, r.RegionCode)
-		go c.setNearestDERP(r.RegionID)
-		ni2 := c.netInfoLast.Clone()
-		ni2.PreferredDERP = r.RegionID
-		c.callNetInfoCallbackLocked(ni2)
-		return nil
-	}
-	return errors.New("too few regions")
 }
 
 // portableTrySetSocketBuffer sets SO_SNDBUF and SO_RECVBUF on pconn to socketBufferSize,

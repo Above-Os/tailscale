@@ -23,9 +23,7 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/interfaces"
-	"tailscale.com/util/cmpx"
 	"tailscale.com/util/dnsname"
-	"tailscale.com/version"
 )
 
 var statusCmd = &ffcli.Command{
@@ -237,9 +235,6 @@ func runStatus(ctx context.Context, args []string) error {
 		printHealth()
 	}
 	printFunnelStatus(ctx)
-	if cv := st.ClientVersion; cv != nil && !cv.RunningLatest && cv.LatestVersion != "" {
-		printf("# Update available: %v -> %v, run `tailscale update` or `tailscale set --auto-update` to update.\n", version.Short(), cv.LatestVersion)
-	}
 	return nil
 }
 
@@ -313,20 +308,12 @@ func dnsOrQuoteHostname(st *ipnstate.Status, ps *ipnstate.PeerStatus) string {
 }
 
 func ownerLogin(st *ipnstate.Status, ps *ipnstate.PeerStatus) string {
-	// We prioritize showing the name of the sharer as the owner of a node if
-	// it's different from the node's user. This is less surprising: if user B
-	// from a company shares user's C node from the same company with user A who
-	// don't know user C, user A might be surprised to see user C listed in
-	// their netmap. We've historically (2021-01..2023-08) always shown the
-	// sharer's name in the UI. Perhaps we want to show both here? But the CLI's
-	// a bit space constrained.
-	uid := cmpx.Or(ps.AltSharerUserID, ps.UserID)
-	if uid.IsZero() {
+	if ps.UserID.IsZero() {
 		return "-"
 	}
-	u, ok := st.User[uid]
+	u, ok := st.User[ps.UserID]
 	if !ok {
-		return fmt.Sprint(uid)
+		return fmt.Sprint(ps.UserID)
 	}
 	if i := strings.Index(u.LoginName, "@"); i != -1 {
 		return u.LoginName[:i+1]
