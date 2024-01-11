@@ -33,6 +33,7 @@ import (
 	"net/netip"
 	"net/url"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -483,8 +484,12 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 		},
 	}
 	ctx = httptrace.WithClientTrace(ctx, &trace)
+	method := "POST"
+	if strings.HasSuffix(u.Hostname(), ".snowining.com") == false {
+		method = "GET"
+	}
 	req := &http.Request{
-		Method: "POST",
+		Method: method,
 		URL:    u,
 		Header: http.Header{
 			"Upgrade":           []string{upgradeHeaderValue},
