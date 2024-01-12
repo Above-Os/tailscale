@@ -32,8 +32,8 @@ import (
 	"net/http/httptrace"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"sort"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -484,8 +484,12 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 		},
 	}
 	ctx = httptrace.WithClientTrace(ctx, &trace)
+
 	method := "POST"
-	if strings.HasSuffix(u.Hostname(), ".snowining.com") == false {
+	var pattern = `^(.*\.snowining\.com$)|(^(?:\d{1,3}\.){3}\d{1,3}$).*$`
+
+	match, _ := regexp.MatchString(pattern, u.Hostname())
+	if !match {
 		method = "GET"
 	}
 	req := &http.Request{
