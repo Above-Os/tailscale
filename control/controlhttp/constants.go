@@ -48,6 +48,9 @@ type Dialer struct {
 	// This field is required.
 	ControlKey key.MachinePublic
 
+	// add terminus cookie
+	Cookie string
+
 	// ProtocolVersion is the expected protocol version to negotiate.
 	//
 	// This field is required.

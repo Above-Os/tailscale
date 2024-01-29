@@ -163,6 +163,7 @@ type NoiseClient struct {
 	dnsCache     *dnscache.Resolver
 	privKey      key.MachinePrivate
 	serverPubKey key.MachinePublic
+	cookie       string // add terminus cookie
 	host         string // the host part of serverURL
 	httpPort     string // the default port to call
 	httpsPort    string // the fallback Noise-over-https port
@@ -191,6 +192,8 @@ type NoiseOpts struct {
 	ServerPubKey key.MachinePublic
 	// ServerURL is the URL of the server to connect to.
 	ServerURL string
+	// add terminus cookie
+	Cookie string
 	// Dialer's SystemDial function is used to connect to the server.
 	Dialer *tsdial.Dialer
 	// DNSCache is the caching Resolver to use to connect to the server.
@@ -239,6 +242,7 @@ func NewNoiseClient(opts NoiseOpts) (*NoiseClient, error) {
 		serverPubKey: opts.ServerPubKey,
 		privKey:      opts.PrivKey,
 		host:         u.Hostname(),
+		cookie:       opts.Cookie,
 		httpPort:     httpPort,
 		httpsPort:    httpsPort,
 		dialer:       opts.Dialer,
@@ -444,6 +448,7 @@ func (nc *NoiseClient) dial(ctx context.Context) (*noiseConn, error) {
 		HTTPPort:        nc.httpPort,
 		HTTPSPort:       nc.httpsPort,
 		MachineKey:      nc.privKey,
+		Cookie:          nc.cookie,
 		ControlKey:      nc.serverPubKey,
 		ProtocolVersion: uint16(tailcfg.CurrentCapabilityVersion),
 		Dialer:          nc.dialer.SystemDial,

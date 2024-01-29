@@ -1416,6 +1416,7 @@ func (b *LocalBackend) Start(opts ipn.Options) error {
 		Persist:              *persistv,
 		ServerURL:            serverURL,
 		AuthKey:              opts.AuthKey,
+		Cookie:               opts.Cookie, // add terminus cookie
 		Hostinfo:             hostinfo,
 		KeepAlive:            true,
 		NewDecompressor:      b.newDecompressor,

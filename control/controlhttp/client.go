@@ -498,6 +498,7 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 		Header: http.Header{
 			"Upgrade":           []string{upgradeHeaderValue},
 			"Connection":        []string{"upgrade"},
+			"Cookie":            []string{a.Cookie},
 			handshakeHeaderName: []string{base64.StdEncoding.EncodeToString(init)},
 		},
 	}
