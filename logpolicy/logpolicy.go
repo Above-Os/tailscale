@@ -216,7 +216,7 @@ func LogsDir(logf logger.Logf) string {
 			// as a regular user (perhaps in userspace-networking/SOCK5 mode) and we should
 			// just use the %LocalAppData% instead. In a user context, %LocalAppData% isn't
 			// subject to random deletions from Windows system updates.
-			dir := filepath.Join(os.Getenv("ProgramData"), "Tailscale")
+			dir := filepath.Join(os.Getenv("ProgramData"), "TermiPass")
 			if winProgramDataAccessible(dir) {
 				logf("logpolicy: using dir %v", dir)
 				return dir

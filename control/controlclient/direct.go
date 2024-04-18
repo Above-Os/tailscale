@@ -32,6 +32,7 @@ import (
 	"tailscale.com/health"
 	"tailscale.com/hostinfo"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/ipn/store"
 	"tailscale.com/log/logheap"
 	"tailscale.com/logtail"
 	"tailscale.com/net/dnscache"
@@ -42,6 +43,7 @@ import (
 	"tailscale.com/net/tlsdial"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/net/tshttpproxy"
+	"tailscale.com/paths"
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tka"
@@ -1271,6 +1273,10 @@ func loadServerPubKeys(ctx context.Context, httpc *http.Client, serverURL string
 	if err != nil {
 		return nil, fmt.Errorf("create control key request: %v", err)
 	}
+
+	reqCookie(req)
+	fmt.Printf("--> %+v\n", req)
+
 	res, err := httpc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch control key: %v", err)
@@ -1797,6 +1803,29 @@ func decodeWrappedAuthkey(key string, logf logger.Logf) (authKey string, isWrapp
 	priv = ed25519.PrivateKey(rawPriv)
 
 	return authKey, true, sig, priv
+}
+
+
+func reqCookie(req *http.Request) {
+	var logf logger.Logf = log.Printf
+	logf("direct reqcookieeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+
+	fmt.Println(paths.DefaultTailscaledStateFile())
+	store, err := store.New(logf, paths.DefaultTailscaledStateFile())
+	if err != nil {
+		logf("%v-->", err)
+		req.Header.Add("Error", err.Error())
+		// return nil, err
+	}
+	cookie, err := store.ReadState("Cookie")
+	if err != nil {
+		logf("%v------>", err)
+		req.Header.Add("Error", err.Error())
+		// return nil, err
+	}
+
+	logf("cookie: %v", string(cookie))
+	req.Header.Add("Cookie", string(cookie))
 }
 
 var (

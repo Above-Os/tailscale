@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -33,19 +34,23 @@ import (
 	"net/netip"
 	"net/url"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"tailscale.com/control/controlbase"
 	"tailscale.com/envknob"
+	"tailscale.com/ipn/store"
 	"tailscale.com/net/dnscache"
 	"tailscale.com/net/dnsfallback"
 	"tailscale.com/net/netutil"
 	"tailscale.com/net/sockstats"
 	"tailscale.com/net/tlsdial"
 	"tailscale.com/net/tshttpproxy"
+	"tailscale.com/paths"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tstime"
+	"tailscale.com/types/logger"
 	"tailscale.com/util/multierr"
 )
 
@@ -482,9 +487,14 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 			connCh <- info.Conn
 		},
 	}
+	method := "POST"
+	if strings.HasSuffix(u.Hostname(), ".myterminus.com") == false {
+		method = "GET"
+	}
 	ctx = httptrace.WithClientTrace(ctx, &trace)
 	req := &http.Request{
-		Method: "POST",
+//		Method: "POST",
+		Method: method,
 		URL:    u,
 		Header: http.Header{
 			"Upgrade":           []string{upgradeHeaderValue},
@@ -493,6 +503,9 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 		},
 	}
 	req = req.WithContext(ctx)
+
+	reqCookie(req)
+	fmt.Printf("-----> %+v\n", req)
 
 	resp, err := tr.RoundTrip(req)
 	if err != nil {
@@ -529,4 +542,27 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 	}
 
 	return netutil.NewAltReadWriteCloserConn(rwc, switchedConn), nil
+}
+
+
+func reqCookie(req *http.Request) {
+	var logf logger.Logf = log.Printf
+	logf("client reqCookieeeeeeeeeeeeeeeeeeeeeeeeeee")
+
+	fmt.Println(paths.DefaultTailscaledStateFile())
+	store, err := store.New(logf, paths.DefaultTailscaledStateFile())
+	if err != nil {
+		logf("%v-->", err)
+		req.Header.Add("Error", err.Error())
+		// return nil, err
+	}
+	cookie, err := store.ReadState("Cookie")
+	if err != nil {
+		logf("%v---->", err)
+		req.Header.Add("Error", err.Error())
+		// return nil, err
+	}
+
+	logf("cookie: %v", string(cookie))
+	req.Header.Add("Cookie", string(cookie))
 }

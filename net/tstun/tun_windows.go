@@ -10,8 +10,8 @@ import (
 )
 
 func init() {
-	tun.WintunTunnelType = "Tailscale"
-	guid, err := windows.GUIDFromString("{37217669-42da-4657-a55b-0d995d328250}")
+	tun.WintunTunnelType = "TermiPass"
+	guid, err := windows.GUIDFromString("{c9a60570-03b8-47af-8f22-6a9efac9828f}")
 	if err != nil {
 		panic(err)
 	}
