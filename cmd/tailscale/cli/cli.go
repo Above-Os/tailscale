@@ -96,6 +96,32 @@ func Run(args []string) (err error) {
 	rootfs := newFlagSet("tailscale")
 	rootfs.StringVar(&rootArgs.socket, "socket", paths.DefaultTailscaledSocket(), "path to tailscaled socket")
 
+var upCmd = &ffcli.Command{
+	Name:       "up",
+	ShortUsage: "up [flags]",
+	ShortHelp:  "Connect to Tailscale, logging in if needed",
+
+	LongHelp: strings.TrimSpace(`
+"tailscale up" connects this machine to your Tailscale network,
+triggering authentication if necessary.
+
+With no flags, "tailscale up" brings the network online without
+changing any settings. (That is, it's the opposite of "tailscale
+down").
+
+If flags are specified, the flags must be the complete set of desired
+settings. An error is returned if any setting would be changed as a
+result of an unspecified flag's default value, unless the --reset flag
+is also used. (The flags --auth-key, --force-reauth, and --qr are not
+considered settings that need to be re-specified when modifying
+settings.)
+`),
+	FlagSet: upFlagSet,
+	Exec: func(ctx context.Context, args []string) error {
+		return runUp(ctx, "up", args, upArgsGlobal)
+	},
+}
+
 	rootCmd := &ffcli.Command{
 		Name:       "tailscale",
 		ShortUsage: "tailscale [flags] <subcommand> [command flags]",

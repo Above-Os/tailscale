@@ -54,7 +54,7 @@ func RunWithArgs(argstr *C.char) string {
 	args := strings.Split(arg_str, " ")
 	fmt.Println(args)
 	if err := cli.Run(args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		log.Printf("cli.Run error: %+v\n", err)
 		//        os.Exit(1)
 		return "some error"
 	}
