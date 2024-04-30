@@ -318,9 +318,9 @@ func (a *Dialer) dialHost(ctx context.Context, addr netip.Addr) (*ClientConn, er
 	}
 
 	// Start the plaintext HTTP attempt first, unless disabled by the envknob.
-	if !forceNoise443() {
-		go try(u80)
-	}
+	// if !forceNoise443() {
+	// 	go try(u80)
+	// }
 
 	// In case outbound port 80 blocked or MITM'ed poorly, start a backup timer
 	// to dial port 443 if port 80 doesn't either succeed or fail quickly.
