@@ -34,7 +34,6 @@ import (
 	"net/netip"
 	"net/url"
 	"sort"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -487,14 +486,14 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 			connCh <- info.Conn
 		},
 	}
-	method := "POST"
-	if strings.HasSuffix(u.Hostname(), ".myterminus.com") == false {
-		method = "GET"
-	}
+	// method := "POST"
+	// if strings.HasSuffix(u.Hostname(), ".myterminus.com") == false {
+	// 	method = "GET"
+	// }
 	ctx = httptrace.WithClientTrace(ctx, &trace)
 	req := &http.Request{
-//		Method: "POST",
-		Method: method,
+		// Method: "POST",
+		Method: "GET",
 		URL:    u,
 		Header: http.Header{
 			"Upgrade":           []string{upgradeHeaderValue},
@@ -543,7 +542,6 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 
 	return netutil.NewAltReadWriteCloserConn(rwc, switchedConn), nil
 }
-
 
 func reqCookie(req *http.Request) {
 	var logf logger.Logf = log.Printf

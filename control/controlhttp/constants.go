@@ -19,7 +19,8 @@ import (
 const (
 	// upgradeHeader is the value of the Upgrade HTTP header used to
 	// indicate the Tailscale control protocol.
-	upgradeHeaderValue = "tailscale-control-protocol"
+	// upgradeHeaderValue = "tailscale-control-protocol"
+	upgradeHeaderValue = "websocket"
 
 	// handshakeHeaderName is the HTTP request header that can
 	// optionally contain base64-encoded initial handshake
