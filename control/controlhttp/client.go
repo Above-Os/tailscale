@@ -32,7 +32,6 @@ import (
 	"net/http/httptrace"
 	"net/netip"
 	"net/url"
-	"regexp"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -485,13 +484,15 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 	}
 	ctx = httptrace.WithClientTrace(ctx, &trace)
 
-	method := "POST"
-	var pattern = `^(.*\.myterminus\.com$)|(^(?:\d{1,3}\.){3}\d{1,3}$)|(.*\.snowinning\.com$).*$`
+	// method := "POST"
+	// var pattern = `^(.*\.myterminus\.com$)|(^(?:\d{1,3}\.){3}\d{1,3}$)|(.*\.snowinning\.com$).*$`
 
-	match, _ := regexp.MatchString(pattern, u.Hostname())
-	if !match {
-		method = "GET"
-	}
+	// match, _ := regexp.MatchString(pattern, u.Hostname())
+	// if !match {
+	// 	method = "GET"
+	// }
+	method := "GET"
+	upgradeHeaderValue := "websocket"
 	req := &http.Request{
 		Method: method,
 		URL:    u,
