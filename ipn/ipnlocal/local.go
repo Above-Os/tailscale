@@ -1025,15 +1025,17 @@ func (b *LocalBackend) setClientStatus(st controlclient.Status) {
 			b.logf("[v1] TKA sync error: %v", err)
 		}
 		b.mu.Lock()
-		if b.tka != nil {
-			head, err := b.tka.authority.Head().MarshalText()
-			if err != nil {
-				b.logf("[v1] error marshalling tka head: %v", err)
+		if b.cc != nil {
+			if b.tka != nil {
+				head, err := b.tka.authority.Head().MarshalText()
+				if err != nil {
+					b.logf("[v1] error marshalling tka head: %v", err)
+				} else {
+					b.cc.SetTKAHead(string(head))
+				}
 			} else {
-				b.cc.SetTKAHead(string(head))
+				b.cc.SetTKAHead("")
 			}
-		} else {
-			b.cc.SetTKAHead("")
 		}
 
 		if !envknob.TKASkipSignatureCheck() {
