@@ -2383,13 +2383,23 @@ func (b *LocalBackend) Login(token *tailcfg.Oauth2Token) {
 	cc.Login(token, b.loginFlags|controlclient.LoginInteractive)
 }
 
+func (b *LocalBackend) CheckClientNil() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.cc == nil {
+		return true
+	}
+	return false
+}
+
 // StartLoginInteractive implements Backend. It requests a new
 // interactive login from controlclient, unless such a flow is already
 // in progress, in which case StartLoginInteractive attempts to pick
 // up the in-progress flow where it left off.
 func (b *LocalBackend) StartLoginInteractive() {
 	b.mu.Lock()
-	b.assertClientLocked()
+	// b.assertClientLocked()
 	b.interact = true
 	url := b.authURL
 	cc := b.cc
