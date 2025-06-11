@@ -267,3 +267,23 @@ func prodDERPMap(ctx context.Context, httpc *http.Client) (*tailcfg.DERPMap, err
 	}
 	return &derpMap, nil
 }
+
+//export TailscalePing
+func TailscalePing(ipStr *C.char, timeout int) *C.char {
+        ip := C.GoString(ipStr)
+        fmt.Printf("args: %v\n", ip)
+        ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+        st, err := localClient.Ping(ctx, netip.MustParseAddr(ip), tailcfg.PingDisco)
+        cancel()
+        if err != nil {
+                if errors.Is(err, context.DeadlineExceeded) {
+                        fmt.Printf("ping %q time out\n", ip)
+                }
+                return C.CString("{}")
+        }
+
+        j, _ := json.MarshalIndent(st, "", "  ")
+        log.Println(string(j))
+
+        return C.CString(string(j))
+}
