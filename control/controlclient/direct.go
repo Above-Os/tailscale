@@ -1824,7 +1824,7 @@ func reqCookie(req *http.Request) {
 		// return nil, err
 	}
 
-	logf("cookie: %v", string(cookie))
+	logf("cookie length: %d", len(cookie))
 	req.Header.Add("Cookie", string(cookie))
 }
 
