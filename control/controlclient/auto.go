@@ -753,7 +753,7 @@ func (c *Auto) Shutdown() {
 	}
 	c.mu.Unlock()
 
-	c.logf("client.Shutdown: inSendStatus=%v", inSendStatus)
+	c.logf("client.Shutdown: inSendStatus=%v, closed=%v", inSendStatus, closed)
 	if !closed {
 		c.unregisterHealthWatch()
 		close(c.quit)

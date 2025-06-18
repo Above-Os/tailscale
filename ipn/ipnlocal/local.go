@@ -550,6 +550,11 @@ func (b *LocalBackend) onHealthChange(sys health.Subsystem, err error) {
 // Shutdown halts the backend and all its sub-components. The backend
 // can no longer be used after Shutdown returns.
 func (b *LocalBackend) Shutdown() {
+	defer func() {
+		if e := recover(); e != nil {
+			b.logf("shutdown failed: %v", e)
+		}
+	}()
 	b.mu.Lock()
 	if b.shutdownCalled {
 		b.mu.Unlock()
@@ -3904,6 +3909,11 @@ func (b *LocalBackend) LogoutSync(ctx context.Context) error {
 }
 
 func (b *LocalBackend) logout(ctx context.Context, sync bool) error {
+	defer func() {
+		if e := recover(); e != nil {
+			b.logf("logout failed: %v", e)
+		}
+	}()
 	b.mu.Lock()
 	cc := b.cc
 	b.mu.Unlock()
