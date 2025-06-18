@@ -724,6 +724,7 @@ func (c *Conn) SetDERPMap(dm *tailcfg.DERPMap) {
 			if rid == c.myDerp {
 				c.myDerp = 0
 			}
+			c.logf("---1---")
 			c.closeDerpLocked(rid, "derp-region-redefined")
 		}
 		if changes {
@@ -741,6 +742,7 @@ func (c *Conn) closeAllDerpLocked(why string) {
 		return // without the useless log statement
 	}
 	for i := range c.activeDerp {
+		c.logf("---2--- i: %d, why: %s", i, why)
 		c.closeDerpLocked(i, why)
 	}
 	c.logActiveDerpLocked()
@@ -800,6 +802,7 @@ func (c *Conn) maybeCloseDERPsOnRebind(okayLocalIPs []netip.Prefix) {
 //
 // c.mu must be held.
 func (c *Conn) closeOrReconnectDERPLocked(regionID int, why string) {
+	c.logf("---3--- regionID: %d, why: %s", regionID, why)
 	c.closeDerpLocked(regionID, why)
 	if !c.privateKey.IsZero() && c.myDerp == regionID {
 		c.startDerpHomeConnectLocked()
@@ -866,6 +869,7 @@ func (c *Conn) cleanStaleDerp() {
 			continue
 		}
 		if ad.lastWrite.Before(tooOld) {
+			c.logf("---4--- i: %d", i)
 			c.closeDerpLocked(i, "idle")
 			dirty = true
 		} else {
