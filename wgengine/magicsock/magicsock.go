@@ -1633,7 +1633,8 @@ func (c *Conn) SetNetworkUp(up bool) {
 		c.startDerpHomeConnectLocked()
 	} else {
 		c.portMapper.NoteNetworkDown()
-		c.closeAllDerpLocked("network-down")
+		c.logf("---a3 / SetNetworkUp---")
+		c.closeAllDerpLocked("network-down") // SetNetworkUp
 	}
 }
 
@@ -1681,12 +1682,14 @@ func (c *Conn) SetPrivateKey(privateKey key.NodePrivate) error {
 		go c.ReSTUN("set-private-key")
 	} else if newKey.IsZero() {
 		c.logf("magicsock: SetPrivateKey called (zeroed)")
-		c.closeAllDerpLocked("zero-private-key")
+		c.logf("---a4 / SetPrivateKey---")
+		c.closeAllDerpLocked("zero-private-key") // SetPrivateKey
 		c.stopPeriodicReSTUNTimerLocked()
 		c.onEndpointRefreshed = nil
 	} else {
 		c.logf("magicsock: SetPrivateKey called (changed)")
-		c.closeAllDerpLocked("new-private-key")
+		c.logf("---a5 / SetPrivateKey---")
+		c.closeAllDerpLocked("new-private-key") // SetPrivateKey
 	}
 
 	// Key changed. Close existing DERP connections and reconnect to home.
@@ -2038,7 +2041,8 @@ func (c *Conn) Close() error {
 
 	c.closed = true
 	c.connCtxCancel()
-	c.closeAllDerpLocked("conn-close")
+	c.logf("---a6 / Close---")
+	c.closeAllDerpLocked("conn-close") // + here
 	// Ignore errors from c.pconnN.Close.
 	// They will frequently have been closed already by a call to connBind.Close.
 	c.pconn6.Close()
@@ -2049,12 +2053,16 @@ func (c *Conn) Close() error {
 	// consistently in the closed state before we release mu to wait
 	// on the endpoint updater & derphttp.Connect.
 	for c.goroutinesRunningLocked() {
+		c.logf("---a7---")
 		c.muCond.Wait()
 	}
 
+	c.logf("---a8---")
 	if pinger := c.getPinger(); pinger != nil {
+		c.logf("---a9---")
 		pinger.Close()
 	}
+	c.logf("---a10---")
 
 	return nil
 }

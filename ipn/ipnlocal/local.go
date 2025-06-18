@@ -564,13 +564,16 @@ func (b *LocalBackend) Shutdown() {
 		b.LogoutSync(ctx) // best effort
 		b.mu.Lock()
 	}
+
 	cc := b.cc
+	b.logf("---Shutdown / 1---", b.sshServer != nil)
 	if b.sshServer != nil {
 		b.sshServer.Shutdown()
 		b.sshServer = nil
 	}
 	b.closePeerAPIListenersLocked()
 	if b.debugSink != nil {
+		b.logf("---Shutdown / 2---")
 		b.e.InstallCaptureHook(nil)
 		b.debugSink.Close()
 		b.debugSink = nil
@@ -578,12 +581,14 @@ func (b *LocalBackend) Shutdown() {
 	b.mu.Unlock()
 
 	if b.sockstatLogger != nil {
+		b.logf("---Shutdown / 3---")
 		b.sockstatLogger.Shutdown()
 	}
 
 	b.unregisterNetMon()
 	b.unregisterHealthWatch()
 	if cc != nil {
+		b.logf("---Shutdown / 4---")
 		cc.Shutdown()
 	}
 	b.ctxCancel()

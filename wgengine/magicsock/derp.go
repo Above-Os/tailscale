@@ -709,7 +709,8 @@ func (c *Conn) SetDERPMap(dm *tailcfg.DERPMap) {
 	old := c.derpMap
 	c.derpMap = dm
 	if dm == nil {
-		c.closeAllDerpLocked("derp-disabled")
+		c.logf("---a1---")
+		c.closeAllDerpLocked("derp-disabled") //
 		return
 	}
 
@@ -745,7 +746,7 @@ func (c *Conn) closeAllDerpLocked(why string) {
 		c.logf("---2--- i: %d, why: %s", i, why)
 		c.closeDerpLocked(i, why)
 	}
-	c.logActiveDerpLocked()
+	c.logActiveDerpLocked() // ---
 }
 
 // DebugBreakDERPConns breaks all DERP connections for debug/testing reasons.
@@ -756,7 +757,8 @@ func (c *Conn) DebugBreakDERPConns() error {
 		c.logf("magicsock: DebugBreakDERPConns: no active DERP connections")
 		return nil
 	}
-	c.closeAllDerpLocked("debug-break-derp")
+	c.logf("---a2---")
+	c.closeAllDerpLocked("debug-break-derp") //
 	c.startDerpHomeConnectLocked()
 	return nil
 }
