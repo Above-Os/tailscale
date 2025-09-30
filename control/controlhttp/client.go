@@ -317,9 +317,9 @@ func (a *Dialer) dialHost(ctx context.Context, addr netip.Addr) (*ClientConn, er
 	}
 
 	// Start the plaintext HTTP attempt first, unless disabled by the envknob.
-	if !forceNoise443() {
-		go try(u80)
-	}
+	// if !forceNoise443() {
+	// 	go try(u80)
+	// }
 
 	// In case outbound port 80 blocked or MITM'ed poorly, start a backup timer
 	// to dial port 443 if port 80 doesn't either succeed or fail quickly.
@@ -483,12 +483,23 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, addr netip.Addr,
 		},
 	}
 	ctx = httptrace.WithClientTrace(ctx, &trace)
+
+	// method := "POST"
+	// var pattern = `^(.*\.myterminus\.com$)|(^(?:\d{1,3}\.){3}\d{1,3}$)|(.*\.snowinning\.com$).*$`
+
+	// match, _ := regexp.MatchString(pattern, u.Hostname())
+	// if !match {
+	// 	method = "GET"
+	// }
+	method := "GET"
+	upgradeHeaderValue := "websocket"
 	req := &http.Request{
-		Method: "POST",
+		Method: method,
 		URL:    u,
 		Header: http.Header{
 			"Upgrade":           []string{upgradeHeaderValue},
 			"Connection":        []string{"upgrade"},
+			"Cookie":            []string{a.Cookie},
 			handshakeHeaderName: []string{base64.StdEncoding.EncodeToString(init)},
 		},
 	}
