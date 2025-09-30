@@ -219,4 +219,7 @@ type Options struct {
 	// AuthKey is an optional node auth key used to authorize a
 	// new node key without user interaction.
 	AuthKey string
+
+	// add olares cookie
+	Cookie string
 }
