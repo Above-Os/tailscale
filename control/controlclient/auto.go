@@ -226,6 +226,10 @@ func NewNoStart(opts Options) (_ *Auto, err error) {
 
 }
 
+func (c *Auto) UpdateCookie(cookie string) {
+	c.direct.cookie = cookie
+}
+
 // SetPaused controls whether HTTP activity should be paused.
 //
 // The client can be paused and unpaused repeatedly, unlike Start and Shutdown, which can only be used once.

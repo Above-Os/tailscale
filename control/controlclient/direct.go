@@ -474,7 +474,7 @@ func (c *Direct) doLogin(ctx context.Context, opt loginOpt) (mustRegen bool, new
 		}
 	}
 
-	c.logf("doLogin(regen=%v, hasUrl=%v)", regen, opt.URL != "")
+	c.logf("doLogin(regen=%v, hasUrl=%v, cookie=%s)", regen, opt.URL != "", c.cookie)
 	if serverKey.IsZero() {
 		keys, err := loadServerPubKeys(ctx, c.httpc, c.serverURL, c.cookie)
 		if err != nil {

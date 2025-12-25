@@ -1259,6 +1259,10 @@ func (b *LocalBackend) startIsNoopLocked(opts ipn.Options) bool {
 		opts.AuthKey == ""
 }
 
+func (b *LocalBackend) UpdateCookie(c string) {
+	b.cc.UpdateCookie(c)
+}
+
 // Start applies the configuration specified in opts, and starts the
 // state machine.
 //
@@ -1418,8 +1422,8 @@ func (b *LocalBackend) Start(opts ipn.Options) error {
 		Persist:              *persistv,
 		ServerURL:            serverURL,
 		AuthKey:              opts.AuthKey,
-		Cookie:               opts.Cookie, // add terminus cookie
-		Hostinfo:             hostinfo,
+		Cookie:               opts.Cookie, // + add terminus cookie
+		Hostinfo:             hostinfo, 
 		KeepAlive:            true,
 		NewDecompressor:      b.newDecompressor,
 		HTTPTestClient:       httpTestClient,

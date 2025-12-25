@@ -26,6 +26,8 @@ const (
 // Currently this is done through a pair of polling https requests in
 // the Auto client, but that might change eventually.
 type Client interface {
+	// Update cookie
+	UpdateCookie(cookie string)
 	// Shutdown closes this session, which should not be used any further
 	// afterwards.
 	Shutdown()
