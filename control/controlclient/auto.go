@@ -98,6 +98,10 @@ func (c *Auto) updateRoutine() {
 	}
 }
 
+func (c *Auto) UpdateCookie(cookie string) {
+	c.direct.cookie = cookie
+}
+
 // atomicGen is an atomic int64 generator. It is used to generate monotonically
 // increasing numbers for updateGen.
 var atomicGen atomic.Int64

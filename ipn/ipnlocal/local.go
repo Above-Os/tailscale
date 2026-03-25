@@ -2408,6 +2408,10 @@ func (b *LocalBackend) initOnce() {
 	b.extHost.Init()
 }
 
+func (b *LocalBackend) UpdateCookie(c string) {
+	b.cc.UpdateCookie(c)
+}
+
 // Start applies the configuration specified in opts, and starts the
 // state machine.
 //
@@ -2593,6 +2597,7 @@ func (b *LocalBackend) startLocked(opts ipn.Options) error {
 		Persist:              *persistv,
 		ServerURL:            serverURL,
 		AuthKey:              opts.AuthKey,
+		Cookie:               opts.Cookie,
 		Hostinfo:             b.hostInfoWithServicesLocked(),
 		HTTPTestClient:       httpTestClient,
 		DiscoPublicKey:       discoPublic,
@@ -6004,6 +6009,10 @@ func (b *LocalBackend) Logout(ctx context.Context, actor ipnauth.Actor) error {
 		return err
 	}
 	return b.resetForProfileChangeLocked()
+}
+
+func (b *LocalBackend) LogoutSync(ctx context.Context) error {
+	return b.Logout(ctx, ipnauth.Self)
 }
 
 // setNetInfo sets b.hostinfo.NetInfo to ni, and passes ni along to the

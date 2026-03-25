@@ -44,6 +44,7 @@ type Client struct {
 	host      string // the host part of serverURL
 	httpPort  string // the default port to dial
 	httpsPort string // the fallback Noise-over-https port or empty if none
+	cookie    string
 
 	// mu protects the following
 	mu       sync.Mutex
@@ -56,6 +57,8 @@ type Client struct {
 type ClientOpts struct {
 	// ServerURL is the URL of the server to connect to.
 	ServerURL string
+
+	Cookie string
 
 	// PrivKey is this node's private key.
 	PrivKey key.MachinePrivate
@@ -155,6 +158,7 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		host:      u.Hostname(),
 		httpPort:  httpPort,
 		httpsPort: httpsPort,
+		cookie:    opts.Cookie,
 		logf:      logf,
 	}
 
@@ -245,6 +249,7 @@ func (nc *Client) dial(ctx context.Context) (*Conn, error) {
 		HTTPSPort:       cmp.Or(nc.httpsPort, controlhttp.NoPort),
 		MachineKey:      nc.opts.PrivKey,
 		ControlKey:      nc.opts.ServerPubKey,
+		Cookie:          nc.cookie,
 		ProtocolVersion: cmp.Or(nc.opts.ProtocolVersion, uint16(tailcfg.CurrentCapabilityVersion)),
 		Dialer:          nc.opts.Dialer.SystemDial,
 		DNSCache:        nc.opts.DNSCache,
@@ -310,3 +315,4 @@ func AddLBHeader(req *http.Request, nodeKey key.NodePublic) {
 		req.Header.Add(tailcfg.LBHeader, nodeKey.String())
 	}
 }
+

@@ -38,6 +38,8 @@ const (
 // The Client must be comparable as it is used by the Observer to detect stale
 // clients.
 type Client interface {
+	// Update cookie
+	UpdateCookie(cookie string)
 	// Shutdown closes this session, which should not be used any further
 	// afterwards.
 	Shutdown()

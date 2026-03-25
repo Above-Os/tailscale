@@ -70,6 +70,7 @@ type Direct struct {
 	dnsCache              *dnscache.Resolver
 	controlKnobs          *controlknobs.Knobs // always non-nil
 	serverURL             string              // URL of the tailcontrol server
+	cookie                string // add cookie
 	clock                 tstime.Clock
 	logf                  logger.Logf
 	netMon                *netmon.Monitor // non-nil
@@ -131,6 +132,7 @@ type Options struct {
 	GetMachinePrivateKey func() (key.MachinePrivate, error) // returns the machine key to use
 	ServerURL            string                             // URL of the tailcontrol server
 	AuthKey              string                             // optional node auth key for auto registration
+	Cookie               string
 	Clock                tstime.Clock
 	Hostinfo             *tailcfg.Hostinfo // non-nil passes ownership, nil means to use default using os.Hostname, etc
 	DiscoPublicKey       key.DiscoPublic
@@ -312,6 +314,7 @@ func NewDirect(opts Options) (*Direct, error) {
 		controlKnobs:          opts.ControlKnobs,
 		getMachinePrivKey:     opts.GetMachinePrivateKey,
 		serverURL:             opts.ServerURL,
+		cookie:                opts.Cookie,
 		clock:                 opts.Clock,
 		logf:                  opts.Logf,
 		persist:               opts.Persist.View(),
@@ -498,6 +501,7 @@ type loginOpt struct {
 	Flags  LoginFlags
 	Regen  bool // generate a new nodekey, can be overridden in doLogin
 	URL    string
+	Cookie string
 	Logout bool // set the expiry to the far past, expiring the node
 	// Expiry, if non-nil, attempts to set the node expiry to the
 	// specified time and cannot be used to extend the expiry.
@@ -568,9 +572,9 @@ func (c *Direct) doLogin(ctx context.Context, opt loginOpt) (mustRegen bool, new
 		}
 	}
 
-	c.logf("doLogin(regen=%v, hasUrl=%v)", regen, opt.URL != "")
+	c.logf("doLogin(regen=%v, hasUrl=%v, cookie=%s)", regen, opt.URL != "", c.cookie)
 	if serverKey.IsZero() {
-		keys, err := loadServerPubKeys(ctx, c.httpc, c.serverURL)
+		keys, err := loadServerPubKeys(ctx, c.httpc, c.serverURL,c.cookie)
 		if err != nil && c.interceptedDial != nil && c.interceptedDial.Load() {
 			c.health.SetUnhealthy(macOSScreenTime, nil)
 		} else {
@@ -704,6 +708,7 @@ func (c *Direct) doLogin(ctx context.Context, opt loginOpt) (mustRegen bool, new
 	if err != nil {
 		return regen, opt.URL, nil, fmt.Errorf("getNoiseClient: %w", err)
 	}
+
 	url := fmt.Sprintf("%s/machine/register", c.serverURL)
 	url = strings.Replace(url, "http:", "https:", 1)
 
@@ -711,12 +716,15 @@ func (c *Direct) doLogin(ctx context.Context, opt loginOpt) (mustRegen bool, new
 	if err != nil {
 		return regen, opt.URL, nil, err
 	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyData))
 	if err != nil {
 		return regen, opt.URL, nil, err
 	}
 	ts2021.AddLBHeader(req, request.OldNodeKey)
 	ts2021.AddLBHeader(req, request.NodeKey)
+
+	req.Header.Set("Cookie", c.cookie)
 
 	res, err := httpc.Do(req)
 	if err != nil {
@@ -1346,12 +1354,15 @@ func encode(v any) ([]byte, error) {
 	return b, nil
 }
 
-func loadServerPubKeys(ctx context.Context, httpc *http.Client, serverURL string) (*tailcfg.OverTLSPublicKeyResponse, error) {
+func loadServerPubKeys(ctx context.Context, httpc *http.Client, serverURL string, cookie string) (*tailcfg.OverTLSPublicKeyResponse, error) {
 	keyURL := fmt.Sprintf("%v/key?v=%d", serverURL, tailcfg.CurrentCapabilityVersion)
 	req, err := http.NewRequestWithContext(ctx, "GET", keyURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create control key request: %v", err)
 	}
+
+	req.Header.Set("Cookie", cookie)
+
 	res, err := httpc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch control key: %v", err)
@@ -1562,6 +1573,7 @@ func (c *Direct) getNoiseClient() (*ts2021.Client, error) {
 			PrivKey:       k,
 			ServerPubKey:  serverNoiseKey,
 			ServerURL:     c.serverURL,
+			Cookie:        c.cookie,
 			Dialer:        c.dialer,
 			DNSCache:      c.dnsCache,
 			Logf:          c.logf,

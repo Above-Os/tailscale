@@ -286,11 +286,12 @@ func (a *Dialer) dialHostOpt(ctx context.Context, optAddr netip.Addr, optACEHost
 	}
 
 	forceTLS := a.forceNoise443()
+	
 
 	// Start the plaintext HTTP attempt first, unless disabled by the envknob.
-	if !forceTLS || u443 == nil {
-		go try(u80)
-	}
+	// if !forceTLS || u443 == nil {
+	// 	go try(u80)
+	// }
 
 	// In case outbound port 80 blocked or MITM'ed poorly, start a backup timer
 	// to dial port 443 if port 80 doesn't either succeed or fail quickly.
@@ -532,13 +533,17 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, optAddr netip.Ad
 			lastConn.Store(info.Conn)
 		},
 	}
+
 	ctx = httptrace.WithClientTrace(ctx, &trace)
+	// method := "GET"
+	// upgradeHeaderValue := "websocket"
 	req := &http.Request{
 		Method: "POST",
 		URL:    u,
 		Header: http.Header{
 			"Upgrade":                             []string{controlhttpcommon.UpgradeHeaderValue},
 			"Connection":                          []string{"upgrade"},
+			"Cookie":                              []string{a.Cookie},
 			controlhttpcommon.HandshakeHeaderName: []string{base64.StdEncoding.EncodeToString(init)},
 		},
 	}
@@ -576,3 +581,4 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, optAddr netip.Ad
 
 	return netutil.NewAltReadWriteCloserConn(rwc, switchedConn), nil
 }
+
