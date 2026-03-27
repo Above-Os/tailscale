@@ -604,7 +604,7 @@ func getPlatformEnvFiles() []string {
 	switch runtime.GOOS {
 	case "windows":
 		return []string{
-			filepath.Join(os.Getenv("ProgramData"), "Tailscale", "tailscaled-env.txt"),
+			filepath.Join(os.Getenv("ProgramData"), "LarePass", "tailscaled-env.txt"),
 		}
 	case "linux":
 		if buildfeatures.HasSynology && distro.Get() == distro.Synology {

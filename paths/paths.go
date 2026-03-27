@@ -23,7 +23,7 @@ var AppSharedDir syncs.AtomicValue[string]
 // or the empty string if there's no reasonable default.
 func DefaultTailscaledSocket() string {
 	if runtime.GOOS == "windows" {
-		return `\\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled`
+		return `\\.\pipe\ProtectedPrefix\Administrators\LarePass\tailscaled`
 	}
 	if runtime.GOOS == "darwin" {
 		return "/var/run/tailscaled.socket"
@@ -66,7 +66,7 @@ func DefaultTailscaledStateFile() string {
 		return f()
 	}
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("ProgramData"), "Tailscale", "server-state.conf")
+		return filepath.Join(os.Getenv("ProgramData"), "LarePass", "server-state.conf")
 	}
 	return ""
 }

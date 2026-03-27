@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"go4.org/mem"
+	"tailscale.com/control/controlhttp"
 	"tailscale.com/control/controlknobs"
 	"tailscale.com/control/ts2021"
 	"tailscale.com/envknob"
@@ -1352,6 +1353,7 @@ func loadServerPubKeys(ctx context.Context, httpc *http.Client, serverURL string
 	if err != nil {
 		return nil, fmt.Errorf("create control key request: %v", err)
 	}
+	controlhttp.ReqCookie(req)
 	res, err := httpc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch control key: %v", err)

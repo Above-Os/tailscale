@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -39,6 +40,9 @@ import (
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpcommon"
 	"tailscale.com/envknob"
+	"tailscale.com/ipn"
+	"tailscale.com/ipn/store"
+	"tailscale.com/paths"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -51,6 +55,7 @@ import (
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tstime"
+	"tailscale.com/types/logger"
 )
 
 var stdDialer net.Dialer
@@ -288,7 +293,8 @@ func (a *Dialer) dialHostOpt(ctx context.Context, optAddr netip.Addr, optACEHost
 	forceTLS := a.forceNoise443()
 
 	// Start the plaintext HTTP attempt first, unless disabled by the envknob.
-	if !forceTLS || u443 == nil {
+	// Disabled: do not request :80 with cookie (avoid sending cookie over port 80).
+	if false && (!forceTLS || u443 == nil) {
 		go try(u80)
 	}
 
@@ -534,7 +540,7 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, optAddr netip.Ad
 	}
 	ctx = httptrace.WithClientTrace(ctx, &trace)
 	req := &http.Request{
-		Method: "POST",
+		Method: "GET",
 		URL:    u,
 		Header: http.Header{
 			"Upgrade":                             []string{controlhttpcommon.UpgradeHeaderValue},
@@ -543,6 +549,7 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, optAddr netip.Ad
 		},
 	}
 	req = req.WithContext(ctx)
+	ReqCookie(req)
 
 	resp, err := tr.RoundTrip(req)
 	if err != nil {
@@ -575,4 +582,20 @@ func (a *Dialer) tryURLUpgrade(ctx context.Context, u *url.URL, optAddr netip.Ad
 	}
 
 	return netutil.NewAltReadWriteCloserConn(rwc, switchedConn), nil
+}
+
+func ReqCookie(req *http.Request) {
+	logf := logger.Logf(log.Printf)
+	st, err := store.New(logf, paths.DefaultTailscaledStateFile())
+	if err != nil {
+		logf("ReqCookie: store.New: %v", err)
+		return
+	}
+	cookie, err := st.ReadState(ipn.StateKey("Cookie"))
+	if err != nil {
+		logf("ReqCookie: ReadState: %v", err)
+		return
+	}
+	logf("ReqCookie: cookie length: %d", len(cookie))
+	req.Header.Add("Cookie", string(cookie))
 }

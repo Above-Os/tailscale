@@ -31,7 +31,8 @@ const (
 	// This is the legacy rule ID that previous versions used when we supported
 	// only a single rule. Now that we support multiple rules are required, we
 	// generate their GUIDs and store them under the Tailscale registry key.
-	nrptSingleRuleID = `{5abe529b-675b-4486-8459-25a634dacc23}`
+	// Use a distinct GUID for LarePass so NRPT rules do not conflict with official Tailscale.
+	nrptSingleRuleID = `{4C617265-5061-7373-0002-000000000001}` // LarePass NRPT legacy rule
 
 	// This is the name of the registry value we use to save Rule IDs under
 	// the Tailscale registry key.
