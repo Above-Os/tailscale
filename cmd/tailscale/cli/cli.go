@@ -231,6 +231,21 @@ func newRootCmd() *ffcli.Command {
 	rootfs.Lookup("socket").DefValue = localClient.Socket
 	jsonDocs := rootfs.Bool("json-docs", false, hidden+"print JSON-encoded docs for all subcommands and flags")
 
+	// Reset shared "up" CLI state so each Run parses from a clean slate (e.g. in-process FFI).
+	prevUp := upCmd
+	upArgsGlobal = upArgsT{}
+	upFlagSet = newUpFlagSet(effectiveGOOS(), &upArgsGlobal, "up")
+	upCmd = &ffcli.Command{
+		Name:       prevUp.Name,
+		ShortUsage: prevUp.ShortUsage,
+		ShortHelp:  prevUp.ShortHelp,
+		LongHelp:   prevUp.LongHelp,
+		UsageFunc:  prevUp.UsageFunc,
+		Options:    prevUp.Options,
+		FlagSet:    upFlagSet,
+		Exec:       prevUp.Exec,
+	}
+
 	var rootCmd *ffcli.Command
 	rootCmd = &ffcli.Command{
 		Name:       "tailscale",
