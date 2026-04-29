@@ -6884,6 +6884,16 @@ func (b *LocalBackend) handleQuad100Port80Conn(w http.ResponseWriter, r *http.Re
 // HookDoctor is an optional hook for the "doctor" problem diagnosis feature.
 var HookDoctor feature.Hook[func(context.Context, *LocalBackend, logger.Logf)]
 
+// devStateStoreLogValue returns v formatted for logs; sensitive keys omit raw bytes.
+func devStateStoreLogValue(key, v string) string {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "cookie":
+		return fmt.Sprintf("[redacted; %d bytes]", len(v))
+	default:
+		return v
+	}
+}
+
 // SetDevStateStore updates the LocalBackend's state storage to the provided values.
 //
 // It's meant only for development.
@@ -6892,7 +6902,7 @@ func (b *LocalBackend) SetDevStateStore(key, value string) error {
 		return errors.New("no state store")
 	}
 	err := ipn.WriteState(b.store, ipn.StateKey(key), []byte(value))
-	b.logf("SetDevStateStore(%q, %q) = %v", key, value, err)
+	b.logf("SetDevStateStore(%q, %q) = %v", key, devStateStoreLogValue(key, value), err)
 
 	if err != nil {
 		return err
