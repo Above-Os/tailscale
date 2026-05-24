@@ -47,23 +47,16 @@ static inline void call_out(Callback ptr, void *data) {
 */
 import "C"
 
-func main() {
-	// fmt.Println(RunWithArgs(C.CString("aaaa"), C.CString("bbbb")))
-}
+func main() {}
 
 //export RunWithArgs
-func RunWithArgs(argstr *C.char) string {
-	arg_str := C.GoString(argstr)
-	fmt.Printf("args: %v\n", arg_str)
-	args := strings.Split(arg_str, " ")
-	fmt.Println(args)
+func RunWithArgs(argstr *C.char) *C.char {
+	args := strings.Fields(C.GoString(argstr))
 	if err := cli.Run(args); err != nil {
 		log.Printf("cli.Run error: %+v\n", err)
-		//        os.Exit(1)
-		return "some error"
+		return errorCString(err)
 	}
-
-	return ""
+	return errorCString(nil)
 }
 
 var localClient local.Client
@@ -72,8 +65,82 @@ func init() {
 	localClient.Socket = paths.DefaultTailscaledSocket()
 }
 
+func errorCString(err error) *C.char {
+	if err == nil {
+		return C.CString("")
+	}
+	return C.CString(err.Error())
+}
+
+//export SetExitNode
+func SetExitNode(ipStr *C.char) *C.char {
+	ctx := context.Background()
+	err := setExitNode(ctx, C.GoString(ipStr))
+	return errorCString(err)
+}
+
+//export SetExitNodeAllowLANAccess
+func SetExitNodeAllowLANAccess(allow bool) *C.char {
+	ctx := context.Background()
+	err := setExitNodeAllowLANAccess(ctx, allow)
+	return errorCString(err)
+}
+
+func setExitNode(ctx context.Context, ip string) error {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		mp := &ipn.MaskedPrefs{
+			ExitNodeIPSet: true,
+			ExitNodeIDSet: true,
+		}
+		_, err := localClient.EditPrefs(ctx, mp)
+		return err
+	}
+
+	st, err := localClient.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("status: %w", err)
+	}
+
+	mp := &ipn.MaskedPrefs{
+		ExitNodeIPSet: true,
+		ExitNodeIDSet: true,
+	}
+	if expr, useAuto := ipn.ParseAutoExitNodeString(ip); useAuto {
+		mp.AutoExitNode = expr
+		mp.AutoExitNodeSet = true
+	} else if err := mp.SetExitNodeIP(ip, st); err != nil {
+		return err
+	}
+	return editPrefsChecked(ctx, mp)
+}
+
+func setExitNodeAllowLANAccess(ctx context.Context, allow bool) error {
+	mp := &ipn.MaskedPrefs{
+		ExitNodeAllowLANAccessSet: true,
+		Prefs: ipn.Prefs{
+			ExitNodeAllowLANAccess: allow,
+		},
+	}
+	return editPrefsChecked(ctx, mp)
+}
+
+func editPrefsChecked(ctx context.Context, mp *ipn.MaskedPrefs) error {
+	curPrefs, err := localClient.GetPrefs(ctx)
+	if err != nil {
+		return fmt.Errorf("get prefs: %w", err)
+	}
+	checkPrefs := curPrefs.Clone()
+	checkPrefs.ApplyEdits(mp)
+	if err := localClient.CheckPrefs(ctx, checkPrefs); err != nil {
+		return err
+	}
+	_, err = localClient.EditPrefs(ctx, mp)
+	return err
+}
+
 //export WatchIPN
-func WatchIPN(argstr *C.char, initial bool, callback C.Callback) *C.char {
+func WatchIPN(initial bool, callback C.Callback) *C.char {
 	go func() {
 		var watchIPNArgs struct {
 			netmap         bool
