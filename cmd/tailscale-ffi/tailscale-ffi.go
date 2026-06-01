@@ -38,6 +38,7 @@ import (
 
 /*
 #include <stdio.h>
+#include <stdlib.h>
 
 // Inline C stubs for function pointers
 typedef void (*Callback)();
@@ -83,6 +84,10 @@ const (
 	vpnJobLogout
 )
 
+// Returned via async done when a queued start is dropped (newer start or logout).
+// Host should treat as cancelled, not failure.
+const vpnAsyncCancelled = "cancelled"
+
 type vpnJob struct {
 	kind        vpnJobKind
 	loginServer string
@@ -122,17 +127,23 @@ func vpnWorker() {
 				ffiLogf("vpn %s: %v", job.kind, err)
 			}
 			if job.done != nil {
-				C.call_out(job.done, unsafe.Pointer(errorCString(err)))
+				msg := ""
+				if err != nil {
+					msg = err.Error()
+				}
+				callOutCString(job.done, msg)
 			}
 		}
 	}
 }
 
 func vpnEnqueue(job vpnJob) {
+	var dropped []vpnJob
 	vpnJobsMu.Lock()
 	kept := make([]vpnJob, 0, len(vpnJobs))
 	for _, j := range vpnJobs {
 		if j.kind == vpnJobStart && (job.kind == vpnJobStart || job.kind == vpnJobLogout) {
+			dropped = append(dropped, j)
 			continue
 		}
 		kept = append(kept, j)
@@ -143,6 +154,13 @@ func vpnEnqueue(job vpnJob) {
 		vpnJobs = append(kept, job)
 	}
 	vpnJobsMu.Unlock()
+
+	for _, j := range dropped {
+		if j.done != nil {
+			callOutCString(j.done, vpnAsyncCancelled)
+		}
+	}
+
 	select {
 	case vpnNotify <- struct{}{}:
 	default:
@@ -198,14 +216,45 @@ func startVpn(ctx context.Context, loginServer, authKey string, acceptDNS bool) 
 	if err := localClient.Start(ctx, ipn.Options{AuthKey: authKey, UpdatePrefs: prefs}); err != nil {
 		return err
 	}
-	return localClient.StartLoginInteractive(ctx)
+	return nil
+}
+
+// returnCString allocates heap memory; the caller must call FreeCString (or libc free).
+func returnCString(s string) *C.char {
+	return C.CString(s)
 }
 
 func errorCString(err error) *C.char {
 	if err == nil {
-		return C.CString("")
+		return returnCString("")
 	}
-	return C.CString(err.Error())
+	return returnCString(err.Error())
+}
+
+func returnEmptyJSON() *C.char {
+	return returnCString("{}")
+}
+
+func freeCString(cs *C.char) {
+	if cs != nil {
+		C.free(unsafe.Pointer(cs))
+	}
+}
+
+//export FreeCString
+func FreeCString(cs *C.char) {
+	freeCString(cs)
+}
+
+// callOutCString runs callback synchronously with s, then frees the C string.
+// The callee must copy the string during the callback (ffi-rs does).
+func callOutCString(callback C.Callback, s string) {
+	if callback == nil {
+		return
+	}
+	cs := returnCString(s)
+	C.call_out(callback, unsafe.Pointer(cs))
+	freeCString(cs)
 }
 
 //export SetExitNode
@@ -275,53 +324,48 @@ func editPrefsChecked(ctx context.Context, mp *ipn.MaskedPrefs) error {
 	return err
 }
 
+const watchIPNReconnectDelay = 3 * time.Second
+
+var watchIPNOnce sync.Once
+
 //export WatchIPN
 func WatchIPN(initial bool, callback C.Callback) *C.char {
-	go func() {
-		var watchIPNArgs struct {
-			netmap         bool
-			initial        bool
-			showPrivateKey bool
-		}
-		watchIPNArgs.netmap = true
-		watchIPNArgs.initial = initial
-		watchIPNArgs.showPrivateKey = false
+	watchIPNOnce.Do(func() {
+		go func() {
+			useInitial := initial
+			for {
+				mask := ipn.NotifyNoPrivateKeys
+				if useInitial {
+					mask |= ipn.NotifyInitialState | ipn.NotifyInitialPrefs | ipn.NotifyInitialNetMap
+				}
+				watcher, err := localClient.WatchIPNBus(context.Background(), mask)
+				if err != nil {
+					ffiLogf("WatchIPN: WatchIPNBus: %v; retry in %v", err, watchIPNReconnectDelay)
+					time.Sleep(watchIPNReconnectDelay)
+					useInitial = true
+					continue
+				}
 
-		ctx := context.Background()
-
-		var mask ipn.NotifyWatchOpt
-		if watchIPNArgs.initial {
-			mask = ipn.NotifyInitialState | ipn.NotifyInitialPrefs | ipn.NotifyInitialNetMap
-		}
-		if !watchIPNArgs.showPrivateKey {
-			mask |= ipn.NotifyNoPrivateKeys
-		}
-		watcher, err := localClient.WatchIPNBus(ctx, mask)
-		if err != nil {
-			ffiLogf("WatchIPN: WatchIPNBus: %v", err)
-			return
-		}
-		defer watcher.Close()
-		ffiLogf("WatchIPN: connected (initial=%v)", initial)
-		for {
-			n, err := watcher.Next()
-			if err != nil {
-				ffiLogf("WatchIPN: Next: %v", err)
-				j, _ := json.MarshalIndent(n, "", "\t")
-				C.call_out(callback, unsafe.Pointer(C.CString(string(j))))
-				return
+				for {
+					n, err := watcher.Next()
+					if err != nil {
+						watcher.Close()
+						ffiLogf("WatchIPN: Next: %v; reconnect in %v", err, watchIPNReconnectDelay)
+						time.Sleep(watchIPNReconnectDelay)
+						useInitial = true
+						break
+					}
+					j, err := json.Marshal(n)
+					if err != nil {
+						ffiLogf("WatchIPN: marshal: %v", err)
+						continue
+					}
+					callOutCString(callback, string(j))
+				}
 			}
-			if !watchIPNArgs.netmap {
-				n.NetMap = nil
-			}
-			j, _ := json.MarshalIndent(n, "", "\t")
-			C.call_out(callback, unsafe.Pointer(C.CString(string(j))))
-			if initial {
-				break
-			}
-		}
-	}()
-	return C.CString("")
+		}()
+	})
+	return errorCString(nil)
 }
 
 //export SetCookie
@@ -343,13 +387,13 @@ func GetPrefs() *C.char {
 	prefs, err := localClient.GetPrefs(ctx)
 	if err != nil {
 		ffiLogf("GetPrefs: %v", err)
-		return C.CString("{}")
+		return returnEmptyJSON()
 	}
 
 	j, _ := json.MarshalIndent(prefs, "", "\t")
 	ffiLogf("GetPrefs:\n%s", string(j))
 
-	return C.CString(string(j))
+	return returnCString(string(j))
 }
 
 //export GetStatus
@@ -358,13 +402,13 @@ func GetStatus() *C.char {
 	st, err := localClient.Status(ctx)
 	if err != nil {
 		ffiLogf("GetStatus: %v", err)
-		return C.CString("{}")
+		return returnEmptyJSON()
 	}
 
 	j, _ := json.MarshalIndent(st, "", "  ")
 	ffiLogf("GetStatus:\n%s", string(j))
 
-	return C.CString(string(j))
+	return returnCString(string(j))
 }
 
 var netcheckArgs struct {
@@ -382,16 +426,20 @@ func GetNetcheck() *C.char {
 	ctx := context.Background()
 	logf := logger.WithPrefix(ffiLogf, "portmap: ")
 	bus := eventbus.New()
+	defer bus.Close()
 	netMon, err := netmon.New(bus, logf)
 	if err != nil {
 		ffiLogf("GetNetcheck: netmon: %v", err)
-		return C.CString("{}")
+		return returnEmptyJSON()
 	}
+	defer netMon.Close()
+
 	pm := portmapper.NewClient(portmapper.Config{
 		EventBus: bus,
 		Logf:     logger.Discard,
 		NetMon:   netMon,
 	})
+	defer pm.Close()
 	pm.SetGatewayLookupFunc(netMon.GatewayAndSelfIP)
 
 	c := &netcheck.Client{
@@ -422,7 +470,7 @@ func GetNetcheck() *C.char {
 		dm, err = prodDERPMap(ctx, http.DefaultClient)
 		if err != nil {
 			ffiLogf("GetNetcheck: fetch DERP map: %v", err)
-			return C.CString("{}")
+			return returnEmptyJSON()
 		}
 	}
 
@@ -434,12 +482,12 @@ func GetNetcheck() *C.char {
 	}
 	if err != nil {
 		ffiLogf("GetNetcheck: GetReport: %v", err)
-		return C.CString("{}")
+		return returnEmptyJSON()
 	}
 	j, _ := json.MarshalIndent(report, "", "\t")
 	ffiLogf("GetNetcheck (%v):\n%s", d.Round(time.Millisecond), string(j))
 
-	return C.CString(string(j))
+	return returnCString(string(j))
 }
 
 func portMapping(r *netcheck.Report) string {
@@ -507,10 +555,7 @@ func tailscalePingJSON(ip string, timeoutSec int) string {
 func TailscalePingAsync(ipStr *C.char, timeout int, done C.Callback) *C.char {
 	ip := C.GoString(ipStr)
 	go func() {
-		if done == nil {
-			return
-		}
-		C.call_out(done, unsafe.Pointer(C.CString(tailscalePingJSON(ip, timeout))))
+		callOutCString(done, tailscalePingJSON(ip, timeout))
 	}()
 	return errorCString(nil)
 }
