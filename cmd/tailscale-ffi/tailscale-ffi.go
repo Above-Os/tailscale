@@ -216,7 +216,8 @@ func startVpn(ctx context.Context, loginServer, authKey string, acceptDNS bool) 
 	if err := localClient.Start(ctx, ipn.Options{AuthKey: authKey, UpdatePrefs: prefs}); err != nil {
 		return err
 	}
-	return nil
+
+	return localClient.StartLoginInteractive(ctx)
 }
 
 // returnCString allocates heap memory; the caller must call FreeCString (or libc free).

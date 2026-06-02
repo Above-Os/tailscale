@@ -22,7 +22,7 @@ This produces `tailscale-ffi.dll` and `tailscale-ffi.h`. The package is Windows 
 | `SetExitNodeAllowLANAccess(allow bool)`                   | Enable or disable exit node LAN access.                                                      |
 | `WatchIPN(initial bool, callback Callback)`               | Subscribe to IPN notifications; callback receives JSON (copied during callback; freed in Go). |
 | `FreeCString(s *char)`                                    | Free a string returned by exports that use `*C.char` (call after copying in the host).        |
-| `StartVpnAsync` / `LogoutAsync` / `TailscalePingAsync`    | Async VPN/ping; completion via `Callback`. Dropped queued `start` jobs get `done("cancelled")` (not an error). |
+| `StartVpnAsync` / `LogoutAsync` / `TailscalePingAsync`    | Async VPN/ping; `StartVpnAsync` always uses `--force-reauth` semantics (see `startVpn`). Dropped queued `start` jobs get `done("cancelled")`. |
 | `SetCookie(cookiestr *char)`                              | Set dev store key `Cookie` (for control auth).                                               |
 | `GetPrefs()`                                              | Return current prefs as JSON string.                                                         |
 | `GetStatus()`                                             | Return current status as JSON string.                                                        |
