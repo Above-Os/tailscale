@@ -76,4 +76,3 @@ jobs:
           path: |
             tailscaled-arm64.exe
             cmd/tailscale-ffi/tailscale-ffi-arm64.dll
-            cmd/tailscale-ffi/tailscale-ffi-arm64.h
