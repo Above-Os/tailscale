@@ -43,7 +43,19 @@ jobs:
         run: go build -trimpath -ldflags="-s -w" -o tailscaled-arm64.exe ./cmd/tailscaled
 
       - name: Build tailscale-ffi-arm64.dll
-        run: go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o cmd/tailscale-ffi/tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          # Default gcc on the image is x64 MinGW and cannot assemble runtime/cgo/gcc_arm64.S.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          if (-not $vsPath) { throw "Visual Studio not found" }
+          Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -Architecture arm64
+          $env:CC = "cl"
+          $env:CXX = "cl"
+          go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o cmd/tailscale-ffi/tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
 
       - name: Verify ARM64 PE machine type
         shell: pwsh
