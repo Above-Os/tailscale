@@ -1,0 +1,67 @@
+# Windows arm64: tailscaled-arm64.exe + tailscale-ffi-arm64.dll
+# Cross-builds on windows-2022 (amd64) using llvm-mingw for CGO/FFI.
+name: Windows ARM64 release binaries
+
+on:
+  push:
+    branches:
+      - arm/**
+  pull_request:
+    branches:
+      - arm/**
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build-and-upload:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build tailscaled-arm64.exe
+        shell: pwsh
+        run: |
+          $env:GOOS = "windows"
+          $env:GOARCH = "arm64"
+          $env:CGO_ENABLED = "0"
+          go build -trimpath -ldflags="-s -w" -o tailscaled-arm64.exe ./cmd/tailscaled
+
+      - name: Build tailscale-ffi-arm64.dll
+        shell: pwsh
+        run: |
+          .\cmd\tailscale-ffi\build-arm64.ps1 -DownloadToolchain -Out tailscale-ffi-arm64.dll
+
+      - name: Verify ARM64 PE machine type
+        shell: pwsh
+        run: |
+          function Assert-Arm64Pe($path) {
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            if ($bytes.Length -lt 0x40) { throw "$path too small" }
+            $machine = [BitConverter]::ToUInt16($bytes, 0x3C + 4)
+            if ($machine -ne 0xAA64) {
+              throw "$path machine=0x{0:X4}, expected 0xAA64 (ARM64)" -f $machine
+            }
+            Write-Host "$path is ARM64 PE"
+          }
+          Assert-Arm64Pe "tailscaled-arm64.exe"
+          Assert-Arm64Pe "cmd/tailscale-ffi/tailscale-ffi-arm64.dll"
+
+      - if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" tailscaled-arm64.exe cmd/tailscale-ffi/tailscale-ffi-arm64.dll --clobber
+
+      - if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-${{ github.run_id }}
+          path: |
+            tailscaled-arm64.exe
+            cmd/tailscale-ffi/tailscale-ffi-arm64.dll
+            cmd/tailscale-ffi/tailscale-ffi-arm64.h

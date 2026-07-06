@@ -1,0 +1,5 @@
+node_modules/
+tailscale-ffi.dll
+tailscale-ffi.h
+tailscale-ffi-arm64.dll
+tailscale-ffi-arm64.h
