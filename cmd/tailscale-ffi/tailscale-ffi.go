@@ -41,9 +41,11 @@ import (
 #include <stdlib.h>
 
 // Inline C stubs for function pointers
-typedef void (*Callback)();
+typedef void (*Callback)(void *data);
 static inline void call_out(Callback ptr, void *data) {
-    (ptr)(data);
+	if (ptr != NULL) {
+		ptr(data);
+	}
 }
 */
 import "C"
