@@ -5,10 +5,10 @@ name: Windows ARM64 release binaries
 on:
   push:
     branches:
-      - arm/**
+      - win-arm/**
   pull_request:
     branches:
-      - arm/**
+      - win-arm/**
   workflow_dispatch:
   release:
     types: [published]
