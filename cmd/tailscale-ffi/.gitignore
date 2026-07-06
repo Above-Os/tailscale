@@ -1,6 +1,0 @@
-node_modules/
-build-arm64.ps1
-tailscale-ffi.dll
-tailscale-ffi.h
-tailscale-ffi-arm64.dll
-tailscale-ffi-arm64.h
