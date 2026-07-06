@@ -1,5 +1,5 @@
 # Windows arm64: tailscaled-arm64.exe + tailscale-ffi-arm64.dll
-# Cross-builds on windows-2022 (amd64) using llvm-mingw for CGO/FFI.
+# Native build on GitHub-hosted windows-11-arm runner (no llvm-mingw cross toolchain).
 name: Windows ARM64 release binaries
 
 on:
@@ -15,7 +15,10 @@ on:
 
 jobs:
   build-and-upload:
-    runs-on: windows-2022
+    runs-on: windows-11-arm
+
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -24,18 +27,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Verify ARM64 runner
+        shell: pwsh
+        run: |
+          if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne 'Arm64') {
+            throw "Expected Arm64 runner, got $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+          }
+          Write-Host "Runner OS: $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+          go env GOOS GOARCH
+
       - name: Build tailscaled-arm64.exe
         shell: pwsh
-        run: |
-          $env:GOOS = "windows"
-          $env:GOARCH = "arm64"
-          $env:CGO_ENABLED = "0"
-          go build -trimpath -ldflags="-s -w" -o tailscaled-arm64.exe ./cmd/tailscaled
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags="-s -w" -o tailscaled-arm64.exe ./cmd/tailscaled
 
       - name: Build tailscale-ffi-arm64.dll
-        shell: pwsh
-        run: |
-          .\cmd\tailscale-ffi\build-arm64.ps1 -DownloadToolchain -Out tailscale-ffi-arm64.dll
+        run: go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o cmd/tailscale-ffi/tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
 
       - name: Verify ARM64 PE machine type
         shell: pwsh
@@ -43,7 +51,11 @@ jobs:
           function Assert-Arm64Pe($path) {
             $bytes = [System.IO.File]::ReadAllBytes($path)
             if ($bytes.Length -lt 0x40) { throw "$path too small" }
-            $machine = [BitConverter]::ToUInt16($bytes, 0x3C + 4)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            if ($peOffset -le 0 -or ($peOffset + 6) -gt $bytes.Length) {
+              throw "$path invalid PE offset $peOffset"
+            }
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
             if ($machine -ne 0xAA64) {
               throw "$path machine=0x{0:X4}, expected 0xAA64 (ARM64)" -f $machine
             }
