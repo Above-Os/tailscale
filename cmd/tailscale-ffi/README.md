@@ -15,14 +15,7 @@ go build -v -buildmode=c-shared -o tailscale-ffi.dll ./cmd/tailscale-ffi
 
 **GitHub Actions CI** uses the native `windows-11-arm` runner (same `go build -buildmode=c-shared` as amd64).
 
-**Local cross-compile from amd64** requires an **aarch64 Windows C toolchain** (TDM-GCC x64 cannot be used):
-
-```powershell
-# Downloads llvm-mingw to %LOCALAPPDATA%\tailscale-ffi-toolchain on first run
-.\cmd\tailscale-ffi\build-arm64.ps1 -DownloadToolchain
-```
-
-Or, if `aarch64-w64-mingw32-gcc` is already on `PATH`:
+**Local cross-compile from amd64** requires an **aarch64 Windows C toolchain** (e.g. [llvm-mingw](https://github.com/mstorsjo/llvm-mingw); TDM-GCC x64 cannot be used):
 
 ```batch
 set GOOS=windows
@@ -32,7 +25,7 @@ set CC=aarch64-w64-mingw32-gcc
 go build -v -buildmode=c-shared -ldflags="-s -w" -o tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
 ```
 
-Native build on a Windows ARM64 machine: same as amd64, but omit cross-compiler setup and use `GOARCH=arm64`.
+Native build on a Windows ARM64 machine: same as amd64, but use `GOARCH=arm64`.
 
 This produces `tailscale-ffi.dll` and `tailscale-ffi.h`. The package is Windows + CGO only; building elsewhere (or with `CGO_ENABLED=0`) fails on purpose.
 
