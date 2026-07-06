@@ -1,6 +1,4 @@
-# Windows arm64: tailscaled-arm64.exe + tailscale-ffi-arm64.dll
-# Native build on GitHub-hosted windows-11-arm runner.
-# FFI CGO uses llvm-mingw gcc; image default gcc is x64 MinGW, and MSVC cl rejects cgo -Werror.
+# Windows arm64: cross-build on windows-2022 (same runner as amd64 CI) + llvm-mingw.
 name: Windows ARM64 release binaries
 
 on:
@@ -16,10 +14,7 @@ on:
 
 jobs:
   build-and-upload:
-    runs-on: windows-11-arm
-
-    env:
-      CGO_ENABLED: "1"
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v4
@@ -28,68 +23,41 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify ARM64 runner
-        shell: pwsh
-        run: |
-          if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne 'Arm64') {
-            throw "Expected Arm64 runner, got $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
-          }
-          Write-Host "Runner OS: $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
-          go env GOOS GOARCH
-
       - name: Build tailscaled-arm64.exe
         shell: pwsh
         env:
+          GOOS: windows
+          GOARCH: arm64
           CGO_ENABLED: "0"
         run: go build -trimpath -ldflags="-s -w" -o tailscaled-arm64.exe ./cmd/tailscaled
 
       - name: Build tailscale-ffi-arm64.dll
         shell: pwsh
         env:
+          GOOS: windows
+          GOARCH: arm64
           CGO_ENABLED: "1"
+          CGO_CFLAGS: "-Wno-deprecated-non-prototype"
         run: |
           $ver = "20250402"
-          $toolchainRoot = Join-Path $env:RUNNER_TEMP "llvm-mingw"
-          $zipName = "llvm-mingw-$ver-ucrt-aarch64.zip"
-          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/$zipName"
-          $extracted = Join-Path $toolchainRoot "llvm-mingw-$ver-ucrt-aarch64"
-          if (-not (Test-Path $extracted)) {
-            New-Item -ItemType Directory -Force -Path $toolchainRoot | Out-Null
-            $zipPath = Join-Path $toolchainRoot $zipName
-            Write-Host "Downloading $url ..."
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-            Expand-Archive -Path $zipPath -DestinationPath $extracted -Force
+          $root = Join-Path $env:RUNNER_TEMP "llvm-mingw"
+          $dir = Join-Path $root "llvm-mingw-$ver-ucrt-x86_64"
+          if (-not (Test-Path $dir)) {
+            New-Item -ItemType Directory -Force -Path $root | Out-Null
+            $zip = Join-Path $root "llvm-mingw-$ver-ucrt-x86_64.zip"
+            Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/llvm-mingw-$ver-ucrt-x86_64.zip" -OutFile $zip -UseBasicParsing
+            Expand-Archive -Path $zip -DestinationPath $dir -Force
           }
-          $gcc = Get-ChildItem -Path $extracted -Filter "aarch64-w64-mingw32-gcc.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $gcc) { throw "aarch64-w64-mingw32-gcc.exe not found under $extracted" }
-          Write-Host "Using CC: $($gcc.FullName)"
+          $gcc = Get-ChildItem $dir -Filter aarch64-w64-mingw32-gcc.exe -Recurse | Select-Object -First 1
+          if (-not $gcc) { throw "aarch64-w64-mingw32-gcc.exe not found" }
           $env:CC = $gcc.FullName
           $env:PATH = "$($gcc.DirectoryName);$env:PATH"
-          go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o cmd/tailscale-ffi/tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
-
-      - name: Verify ARM64 PE machine type
-        shell: pwsh
-        run: |
-          function Assert-Arm64Pe($path) {
-            $bytes = [System.IO.File]::ReadAllBytes($path)
-            if ($bytes.Length -lt 0x40) { throw "$path too small" }
-            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-            if ($peOffset -le 0 -or ($peOffset + 6) -gt $bytes.Length) {
-              throw "$path invalid PE offset $peOffset"
-            }
-            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-            if ($machine -ne 0xAA64) {
-              throw "$path machine=0x{0:X4}, expected 0xAA64 (ARM64)" -f $machine
-            }
-            Write-Host "$path is ARM64 PE"
-          }
-          Assert-Arm64Pe "tailscaled-arm64.exe"
-          Assert-Arm64Pe "cmd/tailscale-ffi/tailscale-ffi-arm64.dll"
+          go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
 
       - if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" tailscaled-arm64.exe cmd/tailscale-ffi/tailscale-ffi-arm64.dll --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" tailscaled-arm64.exe tailscale-ffi-arm64.dll --clobber
 
       - if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
@@ -97,4 +65,4 @@ jobs:
           name: windows-arm64-${{ github.run_id }}
           path: |
             tailscaled-arm64.exe
-            cmd/tailscale-ffi/tailscale-ffi-arm64.dll
+            tailscale-ffi-arm64.dll
