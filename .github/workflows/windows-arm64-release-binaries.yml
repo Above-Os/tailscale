@@ -1,6 +1,6 @@
 # Windows arm64: tailscaled-arm64.exe + tailscale-ffi-arm64.dll
 # Native build on GitHub-hosted windows-11-arm runner.
-# FFI CGO uses MSVC (cl) via vcvarsall arm64; default gcc is x64 MinGW and breaks cgo.
+# FFI CGO uses llvm-mingw gcc; image default gcc is x64 MinGW, and MSVC cl rejects cgo -Werror.
 name: Windows ARM64 release binaries
 
 on:
@@ -48,22 +48,23 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: |
-          # Default gcc on the image is x64 MinGW and cannot assemble runtime/cgo/gcc_arm64.S.
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -property installationPath
-          if (-not $vsPath) { throw "Visual Studio not found" }
-          $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
-          if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found: $vcvars" }
-          cmd /c "`"$vcvars`" arm64 >nul 2>&1 && set" | ForEach-Object {
-            if ($_ -match '^(?<key>[^=]+)=(?<val>.*)$') {
-              Set-Item -Path "Env:$($matches.key)" -Value $matches.val
-            }
+          $ver = "20250402"
+          $toolchainRoot = Join-Path $env:RUNNER_TEMP "llvm-mingw"
+          $zipName = "llvm-mingw-$ver-ucrt-aarch64.zip"
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/$zipName"
+          $extracted = Join-Path $toolchainRoot "llvm-mingw-$ver-ucrt-aarch64"
+          if (-not (Test-Path $extracted)) {
+            New-Item -ItemType Directory -Force -Path $toolchainRoot | Out-Null
+            $zipPath = Join-Path $toolchainRoot $zipName
+            Write-Host "Downloading $url ..."
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+            Expand-Archive -Path $zipPath -DestinationPath $extracted -Force
           }
-          if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
-            throw "cl.exe not found after vcvarsall arm64"
-          }
-          $env:CC = "cl"
-          $env:CXX = "cl"
+          $gcc = Get-ChildItem -Path $extracted -Filter "aarch64-w64-mingw32-gcc.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $gcc) { throw "aarch64-w64-mingw32-gcc.exe not found under $extracted" }
+          Write-Host "Using CC: $($gcc.FullName)"
+          $env:CC = $gcc.FullName
+          $env:PATH = "$($gcc.DirectoryName);$env:PATH"
           go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o cmd/tailscale-ffi/tailscale-ffi-arm64.dll ./cmd/tailscale-ffi
 
       - name: Verify ARM64 PE machine type
